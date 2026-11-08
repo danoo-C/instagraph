@@ -6,10 +6,11 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
-![Polars](https://img.shields.io/badge/Polars-CD792C?logo=polars&logoColor=white)
+![Polars](https://img.shields.io/badge/Polars-CD792C)
 ![React](https://img.shields.io/badge/React_18-20232A?logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 ![ECharts](https://img.shields.io/badge/ECharts-AA344D?logo=apacheecharts&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 ![Overview dashboard](images/overview.png)
 
@@ -197,6 +198,10 @@ instagraph/
 Further reading: [`spec.md`](spec.md) (full specification and metric definitions),
 [`backend/CONTRACTS.md`](backend/CONTRACTS.md) and
 [`frontend/CONTRACTS.md`](frontend/CONTRACTS.md) (interfaces for contributors).
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ## Disclaimer
 
