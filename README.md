@@ -86,7 +86,7 @@ chat on its own, and each person in it.
 ### Install
 
 ```bash
-git clone <repository-url> instagraph
+git clone https://github.com/danoo-C/instagraph
 cd instagraph
 make setup      # creates backend/.venv, installs Python and npm dependencies
 ```
