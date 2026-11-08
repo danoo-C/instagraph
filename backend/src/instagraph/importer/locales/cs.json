@@ -1,0 +1,144 @@
+{
+  "locale": "cs",
+  "name": "Čeština",
+  "verified": false,
+  "note": "Best-knowledge strings; check against real Czech exports before release (spec D1). Matching is case- and accent-insensitive.",
+  "self_actors": ["Vy", "Ty"],
+  "patterns": [
+    {"id": "like", "type": "like", "match": [
+      "(?:(?P<actor>.+?) )?líbí se (?:mu|jí|jim|vám|ti|mu/jí|mu\\(jí\\)) (?:vaše |tvoje )?zpráva",
+      "(?P<actor>.+?) se líbí (?:vaše |tvoje )?zpráva",
+      "(?:(?P<actor>.+?) )?označil(?:a|\\(a\\)|i)? zprávu (?:jako )?(?:to se mi líbí|líbí se mi|oblíbenou)"
+    ]},
+
+    {"id": "reaction_text", "type": "reaction", "event": "reaction_text", "match": [
+      "(?:(?P<actor>.+?) )?reagoval(?:a|\\(a\\)|i)? (?:emoji )?(?P<emoji>.+?) na (?:(?:vaši|vaší|tvou|tvoji|jeho|její|jejich|svou) )?zprávu",
+      "(?:(?P<actor>.+?) )?reagoval(?:a|\\(a\\)|i)? (?:emoji )?(?P<emoji>.+?) na zprávu (?:uživatele )?(?P<target>.+?)",
+      "reagovali jste (?:emoji )?(?P<emoji>.+?) na (?:(?:jeho|její|jejich) )?zprávu",
+      "reagoval(?:a|\\(a\\))? jsi (?P<emoji>.+?) na (?:(?:jeho|její|jejich) )?zprávu"
+    ]},
+
+    {"id": "attachment", "type": "system", "event": "attachment", "match": [
+      "(?P<actor>.+?) poslal(?:a|\\(a\\)|i)? přílohu",
+      "poslali jste přílohu",
+      "poslal(?:a|\\(a\\))? jsi přílohu",
+      "(?P<actor>.+?) poslal(?:a|\\(a\\)|i)? (?:fotku|fotografii|video|hlasovou zprávu|gif|nálepku|odkaz|příspěvek|reel|soubor)",
+      "(?P<actor>.+?) sdílel(?:a|\\(a\\)|i)? (?:příspěvek|reel|příběh|odkaz|profil)"
+    ]},
+
+    {"id": "audio_call_ended", "type": "call", "call_kind": "audio", "match": [
+      "(?:hlasový hovor|audiohovor|zvukový hovor) (?:skončil|byl ukončen|ukončen)"
+    ]},
+    {"id": "video_call_ended", "type": "call", "call_kind": "video", "match": [
+      "(?:videohovor|videochat|video chat) (?:skončil|byl ukončen|ukončen)"
+    ]},
+    {"id": "call_ended", "type": "call", "call_kind": "unknown", "match": [
+      "hovor (?:skončil|byl ukončen|ukončen)"
+    ]},
+    {"id": "audio_call_missed", "type": "call", "call_kind": "audio", "call_missed": true, "match": [
+      "zmeškali jste (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "zmeškal(?:a|\\(a\\))? jsi (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "(?P<actor>.+?) zmeškal(?:a|\\(a\\)|i)? (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "zmeškaný (?:hlasový hovor|audiohovor|zvukový hovor)"
+    ]},
+    {"id": "video_call_missed", "type": "call", "call_kind": "video", "call_missed": true, "match": [
+      "zmeškali jste (?:videohovor|videochat)",
+      "zmeškal(?:a|\\(a\\))? jsi (?:videohovor|videochat)",
+      "(?P<actor>.+?) zmeškal(?:a|\\(a\\)|i)? (?:videohovor|videochat)",
+      "zmeškaný (?:videohovor|videochat)"
+    ]},
+    {"id": "call_missed", "type": "call", "call_kind": "unknown", "call_missed": true, "match": [
+      "zmeškali jste hovor", "(?P<actor>.+?) zmeškal(?:a|\\(a\\)|i)? hovor", "zmeškaný hovor"
+    ]},
+    {"id": "audio_call_started", "type": "system", "event": "call_event", "call_kind": "audio", "match": [
+      "(?P<actor>.+?) (?:zahájil|začal)(?:a|\\(a\\)|i)? (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "(?:zahájili|začali) jste (?:hlasový hovor|audiohovor|zvukový hovor)"
+    ]},
+    {"id": "video_call_started", "type": "system", "event": "call_event", "call_kind": "video", "match": [
+      "(?P<actor>.+?) (?:zahájil|začal)(?:a|\\(a\\)|i)? (?:videohovor|videochat)",
+      "(?:zahájili|začali) jste (?:videohovor|videochat)"
+    ]},
+    {"id": "call_started", "type": "system", "event": "call_event", "call_kind": "unknown", "match": [
+      "(?P<actor>.+?) se připojil(?:a|\\(a\\)|i)? k (?:hovoru|videohovoru|videochatu)",
+      "(?P<actor>.+?) (?:začal|přestal)(?:a|\\(a\\)|i)? sdílet (?:video|obrazovku)"
+    ]},
+
+    {"id": "unsent", "type": "unsent", "match": [
+      "(?P<actor>.+?) zrušil(?:a|\\(a\\)|i)? odeslání zprávy",
+      "zrušili jste odeslání zprávy",
+      "zrušil(?:a|\\(a\\))? jsi odeslání zprávy",
+      "(?:tato )?zpráva byla zrušena",
+      "odeslání zprávy bylo zrušeno"
+    ]},
+
+    {"id": "rename", "type": "system", "event": "rename", "match": [
+      "(?P<actor>.+?) pojmenoval(?:a|\\(a\\)|i)? skupinu (?P<payload>.+?)",
+      "(?P<actor>.+?) změnil(?:a|\\(a\\)|i)? název skupiny na (?P<payload>.+?)",
+      "pojmenovali jste skupinu (?P<payload>.+?)",
+      "změnili jste název skupiny na (?P<payload>.+?)",
+      "(?P<actor>.+?) odstranil(?:a|\\(a\\)|i)? název skupiny"
+    ]},
+    {"id": "join", "type": "system", "event": "join", "match": [
+      "(?P<actor>.+?) přidal(?:a|\\(a\\)|i)? (?:uživatele )?(?P<target>.+?) do (?:skupiny|konverzace)",
+      "přidali jste (?:uživatele )?(?P<target>.+?) do (?:skupiny|konverzace)"
+    ]},
+    {"id": "join_self", "type": "system", "event": "join", "payload": "{actor}", "match": [
+      "(?P<actor>.+?) se připojil(?:a|\\(a\\)|i)? (?:ke skupině|do skupiny|ke konverzaci)"
+    ]},
+    {"id": "leave", "type": "system", "event": "leave", "payload": "{actor}", "match": [
+      "(?P<actor>.+?) opustil(?:a|\\(a\\)|i)? (?:skupinu|konverzaci)",
+      "(?P<actor>.+?) (?:odešel|odešla|odešel\\(a\\)|odešli) ze (?:skupiny|konverzace)"
+    ]},
+    {"id": "leave_you", "type": "system", "event": "leave", "payload": "Vy", "match": [
+      "opustili jste (?:skupinu|konverzaci)", "odešli jste ze (?:skupiny|konverzace)"
+    ]},
+    {"id": "removed", "type": "system", "event": "removed", "match": [
+      "(?P<actor>.+?) (?:odebral|odstranil)(?:a|\\(a\\)|i)? (?:uživatele )?(?P<target>.+?) ze (?:skupiny|konverzace)",
+      "(?:odebrali|odstranili) jste (?:uživatele )?(?P<target>.+?) ze (?:skupiny|konverzace)"
+    ]},
+    {"id": "photo_change", "type": "system", "event": "photo_change", "match": [
+      "(?P<actor>.+?) změnil(?:a|\\(a\\)|i)? (?:fotku|fotografii|obrázek) (?:skupiny|konverzace)",
+      "změnili jste (?:fotku|fotografii|obrázek) (?:skupiny|konverzace)",
+      "(?P<actor>.+?) odstranil(?:a|\\(a\\)|i)? (?:fotku|fotografii|obrázek) skupiny"
+    ]},
+    {"id": "theme_change", "type": "system", "event": "theme_change", "match": [
+      "(?P<actor>.+?) změnil(?:a|\\(a\\)|i)? (?:motiv|téma)(?: (?:chatu|konverzace))?(?: na (?P<payload>.+?))?",
+      "změnili jste (?:motiv|téma)(?: (?:chatu|konverzace))?(?: na (?P<payload>.+?))?"
+    ]},
+    {"id": "emoji_change", "type": "system", "event": "emoji_change", "match": [
+      "(?P<actor>.+?) (?:nastavil|změnil)(?:a|\\(a\\)|i)? (?:rychlou reakci|emoji) na (?P<payload>.+?)"
+    ]},
+    {"id": "nickname_for", "type": "system", "event": "nickname", "payload": "{target}\t{nickname}", "match": [
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? přezdívku (?:pro |uživatele |uživateli )?(?P<target>.+?) na (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_own", "type": "system", "event": "nickname", "payload": "{actor}\t{nickname}", "match": [
+      "(?P<actor>.+?) si nastavil(?:a|\\(a\\)|i)? přezdívku (?P<nickname>.+?)",
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? (?:svou|svoji) přezdívku na (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_you", "type": "system", "event": "nickname", "payload": "Vy\t{nickname}", "match": [
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? (?:vaši|tvou|tvoji) přezdívku na (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_cleared", "type": "system", "event": "nickname", "payload": "{target}\t", "match": [
+      "(?P<actor>.+?) (?:smazal|odstranil)(?:a|\\(a\\)|i)? přezdívku (?:pro |uživatele )?(?P<target>.+?)"
+    ]},
+    {"id": "admin", "type": "system", "event": "admin", "match": [
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? (?:uživatele )?(?P<target>.+?) jako správce",
+      "(?P<actor>.+?) odebral(?:a|\\(a\\)|i)? (?:uživatele )?(?P<target>.+?) (?:ze správců|jako správce)",
+      "(?P<actor>.+?) (?:je|jste) teď správce(?:m)?"
+    ]},
+    {"id": "story_reply", "type": "system", "event": "story_reply", "match": [
+      "(?:(?P<actor>.+?) )?odpověděl(?:a|\\(a\\)|i)? na (?:váš|tvůj|jeho|její|jejich) příběh",
+      "odpověděli jste na (?:jeho|její|jejich) příběh",
+      "(?:(?P<actor>.+?) )?reagoval(?:a|\\(a\\)|i)? na (?:váš|tvůj|jeho|její|jejich) příběh(?: (?P<payload>.+?))?"
+    ]},
+    {"id": "story_mention", "type": "system", "event": "story_mention", "match": [
+      "(?:(?P<actor>.+?) )?(?:zmínil|označil)(?:a|\\(a\\)|i)? (?:vás|tě) ve (?:svém|svým) příběhu",
+      "(?:zmínili|označili) jste (?P<target>.+?) ve svém příběhu"
+    ]},
+    {"id": "other", "type": "system", "event": "other", "match": [
+      "(?P<actor>.+?) (?:připnul|odepnul)(?:a|\\(a\\)|i)? zprávu",
+      "(?P<actor>.+?) (?:zapnul|vypnul)(?:a|\\(a\\)|i)? (?:režim mizení|mizející zprávy)",
+      "(?P<actor>.+?) vytvořil(?:a|\\(a\\)|i)? skupinu(?: (?P<payload>.+?))?"
+    ]}
+  ]
+}

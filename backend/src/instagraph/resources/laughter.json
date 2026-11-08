@@ -1,0 +1,15 @@
+{
+  "_doc": "Default laughter patterns (spec §6.5): case-insensitive regexes (Rust/Polars syntax, no look-around) or literal emoji. Mirrors AppSettings.laughter_patterns defaults; the user's list in settings wins.",
+  "patterns": [
+    "\\b(?:a?ha){2,}h?\\b",
+    "\\b(?:e?he){2,}h?\\b",
+    "\\bx+d+\\b",
+    "\\blol+\\b",
+    "\\blmao+\\b",
+    "\\brofl\\b",
+    "😂",
+    "🤣",
+    "💀",
+    "😆"
+  ]
+}

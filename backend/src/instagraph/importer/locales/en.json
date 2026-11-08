@@ -1,0 +1,126 @@
+{
+  "locale": "en",
+  "name": "English",
+  "verified": true,
+  "self_actors": ["You"],
+  "patterns": [
+    {"id": "like", "type": "like", "match": [
+      "(?:(?P<actor>.+?) )?liked a message",
+      "(?:(?P<actor>.+?) )?liked (?:your|their|his|her) message"
+    ]},
+
+    {"id": "reaction_text", "type": "reaction", "event": "reaction_text", "match": [
+      "(?:(?P<actor>.+?) )?reacted (?P<emoji>.+?) to (?:your|their|his|her|a) message",
+      "(?:(?P<actor>.+?) )?reacted (?P<emoji>.+?) to (?P<target>.+?)'s message",
+      "(?:(?P<actor>.+?) )?reacted to (?:your|their|his|her|a) message with (?P<emoji>.+?)"
+    ]},
+
+    {"id": "attachment", "type": "system", "event": "attachment", "match": [
+      "(?P<actor>.+?) sent an attachment",
+      "(?P<actor>.+?) sent an? (?:photo|video|voice message|audio clip|gif|sticker|link|post|reel|file)",
+      "(?P<actor>.+?) shared an? (?:post|reel|story|link|profile)"
+    ]},
+
+    {"id": "audio_call_ended", "type": "call", "call_kind": "audio", "match": [
+      "audio call ended", "the audio call ended"
+    ]},
+    {"id": "video_call_ended", "type": "call", "call_kind": "video", "match": [
+      "video (?:chat|call) ended", "the video (?:chat|call) ended"
+    ]},
+    {"id": "call_ended", "type": "call", "call_kind": "unknown", "match": [
+      "call ended", "the call ended"
+    ]},
+    {"id": "audio_call_missed", "type": "call", "call_kind": "audio", "call_missed": true, "match": [
+      "(?P<actor>.+?) missed an audio call", "missed (?:an )?audio call"
+    ]},
+    {"id": "video_call_missed", "type": "call", "call_kind": "video", "call_missed": true, "match": [
+      "(?P<actor>.+?) missed a video (?:chat|call)", "missed (?:a )?video (?:chat|call)"
+    ]},
+    {"id": "call_missed", "type": "call", "call_kind": "unknown", "call_missed": true, "match": [
+      "(?P<actor>.+?) missed a call", "missed call"
+    ]},
+    {"id": "audio_call_started", "type": "system", "event": "call_event", "call_kind": "audio", "match": [
+      "(?P<actor>.+?) started an audio call",
+      "(?P<actor>.+?) joined the audio call"
+    ]},
+    {"id": "video_call_started", "type": "system", "event": "call_event", "call_kind": "video", "match": [
+      "(?P<actor>.+?) started a video (?:chat|call)",
+      "(?P<actor>.+?) joined the video (?:chat|call)"
+    ]},
+    {"id": "call_started", "type": "system", "event": "call_event", "call_kind": "unknown", "match": [
+      "(?P<actor>.+?) started a call",
+      "(?P<actor>.+?) joined the call",
+      "(?P<actor>.+?) (?:started|stopped) sharing (?:video|(?:their |your |the )?screen)"
+    ]},
+
+    {"id": "unsent", "type": "unsent", "match": [
+      "this message was unsent",
+      "message unsent",
+      "(?P<actor>.+?) unsent a message"
+    ]},
+
+    {"id": "rename", "type": "system", "event": "rename", "match": [
+      "(?P<actor>.+?) named the group (?P<payload>.+?)",
+      "(?P<actor>.+?) changed the group name to (?P<payload>.+?)",
+      "(?P<actor>.+?) renamed the group(?: to)? (?P<payload>.+?)",
+      "(?P<actor>.+?) removed the group name"
+    ]},
+    {"id": "join", "type": "system", "event": "join", "match": [
+      "(?P<actor>.+?) added (?P<target>.+?) to the (?:group|conversation|chat)"
+    ]},
+    {"id": "join_self", "type": "system", "event": "join", "payload": "{actor}", "match": [
+      "(?P<actor>.+?) joined the (?:group|conversation|chat)(?: (?:via|using|with) (?:an |the )?(?:invite )?link)?"
+    ]},
+    {"id": "leave", "type": "system", "event": "leave", "payload": "{actor}", "match": [
+      "(?P<actor>.+?) left the (?:group|conversation|chat)"
+    ]},
+    {"id": "removed", "type": "system", "event": "removed", "match": [
+      "(?P<actor>.+?) removed (?P<target>.+?) from the (?:group|conversation|chat)"
+    ]},
+    {"id": "photo_change", "type": "system", "event": "photo_change", "match": [
+      "(?P<actor>.+?) changed the group(?:'s)? (?:photo|picture|image)",
+      "(?P<actor>.+?) removed the group(?:'s)? (?:photo|picture|image)",
+      "(?P<actor>.+?) changed the conversation (?:photo|picture)"
+    ]},
+    {"id": "theme_change", "type": "system", "event": "theme_change", "match": [
+      "(?P<actor>.+?) changed the (?:chat )?theme(?: to (?P<payload>.+?))?",
+      "(?P<actor>.+?) set the (?:chat )?theme to (?P<payload>.+?)"
+    ]},
+    {"id": "emoji_change", "type": "system", "event": "emoji_change", "match": [
+      "(?P<actor>.+?) (?:set|changed) the (?:quick reaction|emoji|reaction emoji|like emoji) to (?P<payload>.+?)"
+    ]},
+    {"id": "nickname_for", "type": "system", "event": "nickname", "payload": "{target}\t{nickname}", "match": [
+      "(?P<actor>.+?) set the nickname for (?P<target>.+?) to (?P<nickname>.+?)",
+      "(?P<actor>.+?) set (?P<target>.+?)'s nickname to (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_own", "type": "system", "event": "nickname", "payload": "{actor}\t{nickname}", "match": [
+      "(?P<actor>.+?) set (?:his|her|their|your) own nickname to (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_you", "type": "system", "event": "nickname", "payload": "You\t{nickname}", "match": [
+      "(?P<actor>.+?) set your nickname to (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_cleared", "type": "system", "event": "nickname", "payload": "{target}\t", "match": [
+      "(?P<actor>.+?) cleared the nickname for (?P<target>.+?)",
+      "(?P<actor>.+?) cleared (?P<target>your|his|her|their) (?:own )?nickname"
+    ]},
+    {"id": "admin", "type": "system", "event": "admin", "match": [
+      "(?P<actor>.+?) made (?P<target>.+?) an admin",
+      "(?P<actor>.+?) removed (?P<target>.+?) as an? admin",
+      "(?P<actor>.+?) (?:is|are) now an admin"
+    ]},
+    {"id": "story_reply", "type": "system", "event": "story_reply", "match": [
+      "(?:(?P<actor>.+?) )?replied to (?:your|their|his|her) story",
+      "(?:(?P<actor>.+?) )?reacted to (?:your|their|his|her) story(?: with (?P<payload>.+?))?"
+    ]},
+    {"id": "story_mention", "type": "system", "event": "story_mention", "match": [
+      "(?:(?P<actor>.+?) )?mentioned you in (?:their|his|her) story",
+      "(?:(?P<actor>.+?) )?mentioned (?P<target>.+?) in (?:your|their|his|her) story"
+    ]},
+    {"id": "other", "type": "system", "event": "other", "match": [
+      "(?P<actor>.+?) (?:pinned|unpinned) a message",
+      "(?P<actor>.+?) turned (?:on|off) (?:vanish mode|disappearing messages)",
+      "(?P<actor>.+?) created the group(?: (?P<payload>.+?))?",
+      "(?P<actor>.+?) changed the group description"
+    ]}
+  ]
+}

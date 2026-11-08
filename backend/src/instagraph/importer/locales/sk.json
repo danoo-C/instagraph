@@ -1,0 +1,144 @@
+{
+  "locale": "sk",
+  "name": "Slovenčina",
+  "verified": false,
+  "note": "Best-knowledge strings; check against real Slovak exports before release (spec D1). Matching is case- and accent-insensitive.",
+  "self_actors": ["Vy", "Ty"],
+  "patterns": [
+    {"id": "like", "type": "like", "match": [
+      "(?:(?P<actor>.+?) )?páči sa (?:mu|jej|im|vám|ti|mu/jej|mu\\(jej\\)) (?:vaša |tvoja )?správa",
+      "(?P<actor>.+?) sa páči (?:vaša |tvoja )?správa",
+      "(?:(?P<actor>.+?) )?označil(?:a|\\(a\\)|i)? správu (?:ako )?(?:páči sa mi|obľúbenú)"
+    ]},
+
+    {"id": "reaction_text", "type": "reaction", "event": "reaction_text", "match": [
+      "(?:(?P<actor>.+?) )?reagoval(?:a|\\(a\\)|i)? (?:emotikonom )?(?P<emoji>.+?) na (?:(?:vašu|tvoju|jeho|jej|ich|svoju) )?správu",
+      "(?:(?P<actor>.+?) )?reagoval(?:a|\\(a\\)|i)? (?:emotikonom )?(?P<emoji>.+?) na správu (?:používateľa )?(?P<target>.+?)",
+      "reagovali ste (?:emotikonom )?(?P<emoji>.+?) na (?:(?:jeho|jej|ich) )?správu",
+      "reagoval(?:a|\\(a\\))? si (?P<emoji>.+?) na (?:(?:jeho|jej|ich) )?správu"
+    ]},
+
+    {"id": "attachment", "type": "system", "event": "attachment", "match": [
+      "(?P<actor>.+?) poslal(?:a|\\(a\\)|i)? prílohu",
+      "poslali ste prílohu",
+      "poslal(?:a|\\(a\\))? si prílohu",
+      "(?P<actor>.+?) poslal(?:a|\\(a\\)|i)? (?:fotku|fotografiu|video|hlasovú správu|gif|nálepku|odkaz|príspevok|reel|súbor)",
+      "(?P<actor>.+?) zdieľal(?:a|\\(a\\)|i)? (?:príspevok|reel|príbeh|odkaz|profil)"
+    ]},
+
+    {"id": "audio_call_ended", "type": "call", "call_kind": "audio", "match": [
+      "(?:hlasový hovor|audiohovor|zvukový hovor) (?:sa )?(?:skončil|ukončil|bol ukončený)"
+    ]},
+    {"id": "video_call_ended", "type": "call", "call_kind": "video", "match": [
+      "(?:videohovor|videochat|video chat|video hovor) (?:sa )?(?:skončil|ukončil|bol ukončený)"
+    ]},
+    {"id": "call_ended", "type": "call", "call_kind": "unknown", "match": [
+      "hovor (?:sa )?(?:skončil|ukončil|bol ukončený)"
+    ]},
+    {"id": "audio_call_missed", "type": "call", "call_kind": "audio", "call_missed": true, "match": [
+      "zmeškali ste (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "zmeškal(?:a|\\(a\\))? si (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "(?P<actor>.+?) zmeškal(?:a|\\(a\\)|i)? (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "zmeškaný (?:hlasový hovor|audiohovor|zvukový hovor)"
+    ]},
+    {"id": "video_call_missed", "type": "call", "call_kind": "video", "call_missed": true, "match": [
+      "zmeškali ste (?:videohovor|videochat)",
+      "zmeškal(?:a|\\(a\\))? si (?:videohovor|videochat)",
+      "(?P<actor>.+?) zmeškal(?:a|\\(a\\)|i)? (?:videohovor|videochat)",
+      "zmeškaný (?:videohovor|videochat)"
+    ]},
+    {"id": "call_missed", "type": "call", "call_kind": "unknown", "call_missed": true, "match": [
+      "zmeškali ste hovor", "(?P<actor>.+?) zmeškal(?:a|\\(a\\)|i)? hovor", "zmeškaný hovor"
+    ]},
+    {"id": "audio_call_started", "type": "system", "event": "call_event", "call_kind": "audio", "match": [
+      "(?P<actor>.+?) začal(?:a|\\(a\\)|i)? (?:hlasový hovor|audiohovor|zvukový hovor)",
+      "začali ste (?:hlasový hovor|audiohovor|zvukový hovor)"
+    ]},
+    {"id": "video_call_started", "type": "system", "event": "call_event", "call_kind": "video", "match": [
+      "(?P<actor>.+?) začal(?:a|\\(a\\)|i)? (?:videohovor|videochat)",
+      "začali ste (?:videohovor|videochat)"
+    ]},
+    {"id": "call_started", "type": "system", "event": "call_event", "call_kind": "unknown", "match": [
+      "(?P<actor>.+?) sa pripojil(?:a|\\(a\\)|i)? k (?:hovoru|videohovoru|videochatu)",
+      "(?P<actor>.+?) (?:začal|prestal)(?:a|\\(a\\)|i)? zdieľať (?:video|obrazovku)"
+    ]},
+
+    {"id": "unsent", "type": "unsent", "match": [
+      "(?P<actor>.+?) zrušil(?:a|\\(a\\)|i)? odoslanie správy",
+      "zrušili ste odoslanie správy",
+      "zrušil(?:a|\\(a\\))? si odoslanie správy",
+      "(?:táto )?správa bola zrušená",
+      "odoslanie správy bolo zrušené"
+    ]},
+
+    {"id": "rename", "type": "system", "event": "rename", "match": [
+      "(?P<actor>.+?) pomenoval(?:a|\\(a\\)|i)? skupinu (?P<payload>.+?)",
+      "(?P<actor>.+?) zmenil(?:a|\\(a\\)|i)? názov skupiny na (?P<payload>.+?)",
+      "pomenovali ste skupinu (?P<payload>.+?)",
+      "zmenili ste názov skupiny na (?P<payload>.+?)",
+      "(?P<actor>.+?) odstránil(?:a|\\(a\\)|i)? názov skupiny"
+    ]},
+    {"id": "join", "type": "system", "event": "join", "match": [
+      "(?P<actor>.+?) pridal(?:a|\\(a\\)|i)? (?:používateľa )?(?P<target>.+?) do (?:skupiny|konverzácie)",
+      "pridali ste (?:používateľa )?(?P<target>.+?) do (?:skupiny|konverzácie)"
+    ]},
+    {"id": "join_self", "type": "system", "event": "join", "payload": "{actor}", "match": [
+      "(?P<actor>.+?) sa pridal(?:a|\\(a\\)|i)? (?:k skupine|do skupiny|ku konverzácii)"
+    ]},
+    {"id": "leave", "type": "system", "event": "leave", "payload": "{actor}", "match": [
+      "(?P<actor>.+?) opustil(?:a|\\(a\\)|i)? (?:skupinu|konverzáciu)",
+      "(?P<actor>.+?) (?:odišiel|odišla|odišiel\\(a\\)|odišli) zo (?:skupiny|konverzácie)"
+    ]},
+    {"id": "leave_you", "type": "system", "event": "leave", "payload": "Vy", "match": [
+      "opustili ste (?:skupinu|konverzáciu)", "odišli ste zo (?:skupiny|konverzácie)"
+    ]},
+    {"id": "removed", "type": "system", "event": "removed", "match": [
+      "(?P<actor>.+?) odstránil(?:a|\\(a\\)|i)? (?:používateľa )?(?P<target>.+?) zo (?:skupiny|konverzácie)",
+      "odstránili ste (?:používateľa )?(?P<target>.+?) zo (?:skupiny|konverzácie)"
+    ]},
+    {"id": "photo_change", "type": "system", "event": "photo_change", "match": [
+      "(?P<actor>.+?) zmenil(?:a|\\(a\\)|i)? (?:fotku|fotografiu|obrázok) (?:skupiny|konverzácie)",
+      "zmenili ste (?:fotku|fotografiu|obrázok) (?:skupiny|konverzácie)",
+      "(?P<actor>.+?) odstránil(?:a|\\(a\\)|i)? (?:fotku|fotografiu|obrázok) skupiny"
+    ]},
+    {"id": "theme_change", "type": "system", "event": "theme_change", "match": [
+      "(?P<actor>.+?) zmenil(?:a|\\(a\\)|i)? (?:motív|tému)(?: (?:chatu|konverzácie))?(?: na (?P<payload>.+?))?",
+      "zmenili ste (?:motív|tému)(?: (?:chatu|konverzácie))?(?: na (?P<payload>.+?))?"
+    ]},
+    {"id": "emoji_change", "type": "system", "event": "emoji_change", "match": [
+      "(?P<actor>.+?) (?:nastavil|zmenil)(?:a|\\(a\\)|i)? (?:rýchlu reakciu|emotikon|emoji) na (?P<payload>.+?)"
+    ]},
+    {"id": "nickname_for", "type": "system", "event": "nickname", "payload": "{target}\t{nickname}", "match": [
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? prezývku (?:pre |používateľa |používateľovi )?(?P<target>.+?) na (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_own", "type": "system", "event": "nickname", "payload": "{actor}\t{nickname}", "match": [
+      "(?P<actor>.+?) si nastavil(?:a|\\(a\\)|i)? prezývku (?P<nickname>.+?)",
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? svoju prezývku na (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_you", "type": "system", "event": "nickname", "payload": "Vy\t{nickname}", "match": [
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? (?:vašu|tvoju) prezývku na (?P<nickname>.+?)"
+    ]},
+    {"id": "nickname_cleared", "type": "system", "event": "nickname", "payload": "{target}\t", "match": [
+      "(?P<actor>.+?) (?:vymazal|odstránil)(?:a|\\(a\\)|i)? prezývku (?:pre |používateľa )?(?P<target>.+?)"
+    ]},
+    {"id": "admin", "type": "system", "event": "admin", "match": [
+      "(?P<actor>.+?) nastavil(?:a|\\(a\\)|i)? (?:používateľa )?(?P<target>.+?) ako správcu",
+      "(?P<actor>.+?) odstránil(?:a|\\(a\\)|i)? (?:používateľa )?(?P<target>.+?) (?:zo správcov|ako správcu)",
+      "(?P<actor>.+?) (?:je|ste) teraz správca(?:om)?"
+    ]},
+    {"id": "story_reply", "type": "system", "event": "story_reply", "match": [
+      "(?:(?P<actor>.+?) )?odpovedal(?:a|\\(a\\)|i)? na (?:váš|tvoj|jeho|jej|ich) príbeh",
+      "odpovedali ste na (?:jeho|jej|ich) príbeh",
+      "(?:(?P<actor>.+?) )?reagoval(?:a|\\(a\\)|i)? na (?:váš|tvoj|jeho|jej|ich) príbeh(?: (?P<payload>.+?))?"
+    ]},
+    {"id": "story_mention", "type": "system", "event": "story_mention", "match": [
+      "(?:(?P<actor>.+?) )?(?:spomenul|označil)(?:a|\\(a\\)|i)? (?:vás|ťa) vo svojom príbehu",
+      "(?:spomenuli|označili) ste (?P<target>.+?) vo svojom príbehu"
+    ]},
+    {"id": "other", "type": "system", "event": "other", "match": [
+      "(?P<actor>.+?) (?:pripol|odopol|pripla|odopla|pripol\\(a\\)|odopol\\(a\\))(?:i)? správu",
+      "(?P<actor>.+?) (?:zapol|vypol|zapla|vypla|zapol\\(a\\)|vypol\\(a\\))(?:i)? (?:režim zmiznutia|miznúce správy)",
+      "(?P<actor>.+?) vytvoril(?:a|\\(a\\)|i)? skupinu(?: (?P<payload>.+?))?"
+    ]}
+  ]
+}

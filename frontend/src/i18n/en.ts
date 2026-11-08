@@ -1,0 +1,73 @@
+/** English dictionary — the source of truth for i18n keys. Add keys here first. */
+export const en = {
+  "app.name": "Instagraph",
+  "nav.import": "Import",
+  "nav.overview": "Overview",
+  "nav.chats": "Chats",
+  "nav.people": "People",
+  "nav.compare": "Compare",
+  "nav.wrapped": "Wrapped",
+  "nav.search": "Search",
+  "nav.settings": "Settings",
+  "nav.menu": "Menu",
+  "nav.close": "Close menu",
+  "privacy.local": "Your data stays on this computer.",
+
+  "theme.toggle": "Toggle theme",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+
+  "filters.range": "Date range",
+  "filters.allTime": "All time",
+  "filters.last12m": "Last 12 months",
+  "filters.last30d": "Last 30 days",
+  "filters.custom": "Custom",
+  "filters.from": "From",
+  "filters.to": "To",
+  "filters.chats": "Chats",
+  "filters.includeGroups": "Include group chats",
+  "filters.includeRequests": "Include message requests",
+  "filters.includeArchived": "Include archived chats",
+  "filters.excludeSystem": "Exclude system messages",
+  "filters.people": "{n} people",
+  "filters.clearPeople": "Clear people filter",
+  "filters.reset": "Reset filters",
+  "filters.timezone": "Time zone",
+
+  "chart.info": "What this means",
+  "chart.exportPng": "Export PNG",
+  "chart.exportCsv": "Export CSV",
+  "chart.fullscreen": "Fullscreen",
+  "chart.viewTable": "View as table",
+  "chart.viewChart": "View as chart",
+  "chart.noData": "No data for the selected filters.",
+  "chart.rowsTruncated": "Showing first {n} rows. Export CSV for all data.",
+  "chart.close": "Close",
+
+  "error.title": "Something went wrong",
+  "error.retry": "Retry",
+  "error.network": "Cannot reach the backend. Is it running?",
+  "empty.title": "Nothing here yet",
+
+  "tile.open": "Show these messages",
+
+  "chat.tab.summary": "Summary",
+  "chat.tab.timeline": "Timeline",
+  "chat.tab.when": "When",
+  "chat.tab.dynamics": "Dynamics",
+  "chat.tab.words": "Words",
+  "chat.tab.emojis": "Emojis",
+  "chat.tab.reactions": "Reactions",
+  "chat.tab.media": "Media & Links",
+  "chat.tab.calls": "Calls",
+  "chat.tab.group": "Group",
+  "chat.tab.awards": "Awards",
+  "chat.tab.messages": "Messages",
+
+  "message.unsent": "Message unsent",
+  "message.attachment": "Attachment",
+  "page.notFound": "Page not found",
+} as const;
+
+export type TranslationKey = keyof typeof en;
+export type Dictionary = Record<TranslationKey, string>;

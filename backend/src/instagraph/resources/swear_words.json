@@ -1,0 +1,6 @@
+{
+  "_doc": "Built-in swear words (spec §5.11; counting is OFF by default). Matched as whole lower-case tokens, accent-insensitively; entries ending in '*' match any token starting with that prefix. AppSettings.swear_words (if non-empty) replaces this list.",
+  "en": ["fuck*", "shit*", "bitch*", "asshole*", "bastard*", "damn", "dammit", "crap", "dick*", "piss*", "wtf", "stfu", "motherfucker*", "bullshit"],
+  "sk": ["kurva*", "kurv*", "piča", "pica", "pič*", "kokot*", "jebem", "jebať", "jebat", "jeb*", "doprdele", "prdel*", "hovno", "hovná", "hovna", "srač*", "srac*", "debil*", "zasran*", "zasraný", "chuj*"],
+  "cs": ["kurva*", "prdel*", "doprdele", "hovno", "hovna", "sračka", "sracka", "debil*", "kretén*", "kreten*", "píča", "pica", "zmrd*", "čurák*", "curak*", "kokot*", "jebat", "jebe*", "sakra", "zasran*"]
+}

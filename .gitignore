@@ -1,0 +1,44 @@
+# ---------------------------------------------------------------------------
+# PRIVATE DATA — never commit
+# ---------------------------------------------------------------------------
+# Runtime data dir (imported messages, uploads, thumbnails, settings).
+# Also protected by its own data/.gitignore containing "*".
+data/
+# Instagram exports dropped into the repo by accident (zips or unpacked folders).
+*.zip
+instagram-*/
+your_instagram_activity/
+messages/inbox/
+
+# Python
+backend/.venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+build/
+dist/
+backend/openapi.json
+.env
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+*.tsbuildinfo
+
+# Claude Code (personal)
+.claude/settings.local.json
+.claude/.cc-writes/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --c-bg: 248 250 252;
+    --c-surface: 255 255 255;
+    --c-surface-2: 241 245 249;
+    --c-border: 226 232 240;
+    --c-fg: 15 23 42;
+    --c-muted: 100 116 139;
+    --c-accent: 79 70 229;
+    --c-accent-fg: 255 255 255;
+    --c-danger: 220 38 38;
+    color-scheme: light;
+  }
+  .dark {
+    --c-bg: 2 6 23;
+    --c-surface: 15 23 42;
+    --c-surface-2: 30 41 59;
+    --c-border: 51 65 85;
+    --c-fg: 226 232 240;
+    --c-muted: 148 163 184;
+    --c-accent: 129 140 248;
+    --c-accent-fg: 15 23 42;
+    --c-danger: 248 113 113;
+    color-scheme: dark;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-bg;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-border bg-surface shadow-sm;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-sm {
+    @apply h-8 px-2.5 py-0 text-xs;
+  }
+  .btn-primary {
+    @apply border-transparent bg-accent text-accent-fg hover:bg-accent/90;
+  }
+  .icon-btn {
+    @apply inline-flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-40;
+  }
+  .input {
+    @apply rounded-md border border-border bg-surface px-2 py-1 text-sm text-fg;
+  }
+  .tooltip {
+    @apply z-50 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-fg shadow-md;
+  }
+  .page {
+    @apply mx-auto flex w-full max-w-screen-2xl flex-col gap-4 p-4 sm:p-6;
+  }
+  .page-title {
+    @apply text-xl font-semibold;
+  }
+  /** Chart grid: one column on phones, two on large screens. */
+  .card-grid {
+    @apply grid grid-cols-1 gap-4 xl:grid-cols-2;
+  }
+}
+
+@media print {
+  aside,
+  header[data-topbar] {
+    display: none !important;
+  }
+}

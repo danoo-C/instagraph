@@ -1,0 +1,127 @@
+/*
+ * Print / PDF report (spec §11). Import once from main.tsx: `import "@/styles/print.css";`
+ *
+ * Hooks for pages:
+ *   [data-print-hide]      element never printed (buttons, pickers, toolbars)
+ *   [data-print-only]      element printed only (e.g. report header)
+ *   [data-print-section]   starts on a new page (e.g. each chat tab in the report)
+ *   [data-print-keep]      never split across pages (cards already are)
+ */
+
+[data-print-only] {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    background: #fff !important;
+    color: #000;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* App shell: no nav, no filter bar, no scroll containers that would clip pages. */
+  aside,
+  nav,
+  header[data-topbar],
+  [role="tablist"],
+  [data-print-hide],
+  select,
+  input,
+  textarea,
+  .icon-btn,
+  .btn {
+    display: none !important;
+  }
+
+  [data-print-only] {
+    display: block !important;
+  }
+
+  #root > div,
+  #root .overflow-y-auto,
+  #root .overflow-auto,
+  main {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  .page {
+    max-width: none !important;
+    padding: 0 !important;
+    gap: 8mm !important;
+  }
+
+  /* One column for everything. */
+  .card-grid,
+  .grid {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 6mm !important;
+  }
+
+  /* Tile rows stay compact (3 per line). */
+  .grid:has(> .card.p-3) {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .card,
+  table,
+  figure,
+  [data-print-keep] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .card {
+    box-shadow: none !important;
+    border-color: #d1d5db !important;
+    background: #fff !important;
+  }
+
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  [data-print-section] {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  [data-print-section]:first-child,
+  section[data-print-section]:first-of-type {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  /* Sticky table headers and virtualized tables print as plain tables. */
+  thead {
+    position: static !important;
+    display: table-header-group;
+  }
+
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+
+  canvas,
+  svg,
+  img {
+    max-width: 100% !important;
+  }
+}

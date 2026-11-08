@@ -1,0 +1,4 @@
+{
+  "_doc": "Text emoticons counted separately from emojis (spec §6.6). Mirrors textproc.EMOTICONS (case-sensitive: xD/XD are emoticons, lower-case xd is laughter).",
+  "emoticons": [":)", ":-)", ":(", ":-(", ":D", ":-D", ";)", ";-)", ":P", ":-P", ":p", ":-p", ":O", ":o", ":*", ":/", ":-/", ":'(", "<3", "</3", "^^", "^_^", "-_-", "xD", "XD", ":3"]
+}
