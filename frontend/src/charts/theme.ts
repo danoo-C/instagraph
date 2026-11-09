@@ -46,6 +46,8 @@ export function buildEchartsTheme(t: ResolvedTheme): Record<string, unknown> {
   return {
     color: [...PERSON_PALETTE, OTHERS_COLOR],
     backgroundColor: "transparent",
+    // With a transparent background ECharts guesses dark mode wrong, so set it explicitly.
+    darkMode: t === "dark",
     textStyle: {
       color: tk.text,
       fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
@@ -78,7 +80,11 @@ export function buildEchartsTheme(t: ResolvedTheme): Record<string, unknown> {
       yearLabel: { color: tk.muted },
     },
     graph: { lineStyle: { color: tk.axis }, label: { color: tk.text } },
-    line: { symbol: "circle", symbolSize: 4, smooth: false },
-    bar: { itemStyle: { borderRadius: 0 } },
+    // Explicit label colors turn off ECharts' auto outline, which made value labels blurry.
+    // Heatmap is left out so its in-cell labels keep automatic contrast coloring.
+    line: { symbol: "circle", symbolSize: 4, smooth: false, label: { color: tk.text } },
+    bar: { itemStyle: { borderRadius: 0 }, label: { color: tk.text } },
+    scatter: { label: { color: tk.text } },
+    pie: { label: { color: tk.text } },
   };
 }
