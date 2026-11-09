@@ -155,7 +155,9 @@ export function Layout() {
           page scroll. */}
       <div className="relative flex min-w-0 flex-1 flex-col overflow-y-auto">
         <TopBar />
-        <main id="main" className="min-w-0 flex-1">
+        {/* Flex column with `min-h-0`: a page with `flex-1` gets exactly the height below the
+            top bar (e.g. Chats); taller pages overflow into the scroller above as usual. */}
+        <main id="main" className="flex min-h-0 min-w-0 flex-1 flex-col">
           <Outlet />
         </main>
       </div>

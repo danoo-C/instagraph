@@ -19,8 +19,11 @@ export interface DataTableProps<T extends RowData> {
   onSortingChange?: OnChangeFn<SortingState>;
   /** Data is already sorted by the backend. */
   manualSorting?: boolean;
-  /** Virtualize rows inside a scroll container of this height (px). */
-  virtualize?: { height: number; rowHeight?: number };
+  /**
+   * Virtualize rows inside a scroll container of this height (px), or `"fill"` to take the
+   * remaining space of a flex-column parent.
+   */
+  virtualize?: { height: number | "fill"; rowHeight?: number };
   onRowClick?: (row: T) => void;
   /** Called when the last rows become visible (infinite loading, virtualized only). */
   onEndReached?: () => void;
@@ -77,12 +80,19 @@ export function DataTable<T extends RowData>({
     virtualize && items.length ? virtualizer.getTotalSize() - items[items.length - 1]!.end : 0;
   const visible: Row<DataTableFeatures, T>[] = virtualize ? items.map((v) => rows[v.index]!) : rows;
   const colCount = table.getAllLeafColumns().length;
+  const fill = virtualize?.height === "fill";
 
   return (
     <div
       ref={scrollRef}
-      className={cn("overflow-auto rounded-lg border border-border", className)}
-      style={virtualize ? { height: virtualize.height } : undefined}
+      // `relative` keeps absolutely positioned cell content (e.g. `sr-only` text) inside this
+      // scroller; otherwise it escapes to the page scroller and stretches the page.
+      className={cn(
+        "relative overflow-auto rounded-lg border border-border",
+        fill && "min-h-0 flex-1",
+        className,
+      )}
+      style={virtualize && !fill ? { height: virtualize.height } : undefined}
     >
       <table className="w-full border-collapse text-left text-sm">
         {caption && <caption className="sr-only">{caption}</caption>}

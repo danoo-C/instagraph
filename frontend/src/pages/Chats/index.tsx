@@ -93,7 +93,8 @@ export default function ChatsPage() {
   const columns = useMemo(() => buildColumns(months ?? []), [months]);
 
   return (
-    <div className="page">
+    // Full height and width: only the table scrolls, the page itself does not.
+    <div className="page min-h-0 max-w-none flex-1">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="page-title">Chats</h1>
         {total != null && <span className="text-sm text-muted">{formatNumber(total)} chats</span>}
@@ -123,7 +124,8 @@ export default function ChatsPage() {
             sorting={sorting}
             onSortingChange={onSortingChange}
             manualSorting
-            virtualize={{ height: 640, rowHeight: 40 }}
+            virtualize={{ height: "fill", rowHeight: 40 }}
+            className="min-h-[24rem]"
             onRowClick={(r) => navigate(`/chats/${r.thread_id}/summary${keepFilters(params)}`)}
             onEndReached={onEndReached}
             caption="Chats"
