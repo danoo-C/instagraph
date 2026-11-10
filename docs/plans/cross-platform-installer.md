@@ -1,6 +1,8 @@
 # Plan: Cross-platform installer (`install.py`) and desktop icon
 
-**Status:** In progress on `feat/installer`. Icon done.
+**Status:** Implemented on `feat/installer` (steps 1–8). Tested end to end on Linux/WSL; Windows and
+macOS are covered by unit tests, two code reviews and the CI workflow, but still need one manual run
+(see "Manual checks" at the end).
 **Date:** 2026-11-10
 **Scope:** New files `install.py`, `run.py`, `assets/icon.*`; README "Getting started"; a CI
 workflow. No changes to the backend or frontend code.
@@ -420,3 +422,19 @@ where the data is and says to delete it with Settings → Clear all data, or by 
 - **nodejs.org changes:** the download relies on `index.json`, `SHASUMS256.txt` and the archive
   names staying the same. They have been stable for years. If a download fails, the error
   message should still tell users they can install Node themselves.
+
+## Manual checks (not possible in CI)
+
+CI installs and starts the app on all three systems, but can't click icons. Once per system:
+
+1. **Windows:** `py install.py`, answer yes to the icon. Check that the desktop (also a
+   OneDrive desktop) and the Start menu show Instagraph with its icon, that double-clicking
+   opens a console and the browser, and that closing the console stops the app. Run the
+   installer again (expect "updated"), then `py install.py --uninstall`.
+2. **macOS:** `python3 install.py` with Python from python.org, without running "Install
+   Certificates.command" first (the Node download must still work if Node isn't installed).
+   `Instagraph.command` on the desktop should have the icon and open Terminal.
+3. **Linux desktop (GNOME/KDE):** the app menu entry appears; the desktop icon starts without
+   the "untrusted launcher" warning.
+4. **WSL:** answer yes to the Windows icon. The desktop and Start menu `.lnk` start Instagraph
+   in the right distro; `%LOCALAPPDATA%\Instagraph\icon-<hash>.ico` exists; uninstall removes them.
