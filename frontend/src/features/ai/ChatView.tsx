@@ -19,7 +19,18 @@ import {
 import { applyEvent, EMPTY_USAGE, type LiveTurn } from "@/features/ai/turn";
 import { cn } from "@/lib/utils";
 
-export function ChatView({ conv, status }: { conv: AiConversation; status: AiStatus }) {
+export function ChatView({
+  conv,
+  status,
+  initialMessage,
+  onInitialSent,
+}: {
+  conv: AiConversation;
+  status: AiStatus;
+  /** Sent once right away when the conversation is empty (a new report). */
+  initialMessage?: string;
+  onInitialSent?: () => void;
+}) {
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [input, setInput] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
@@ -57,11 +68,11 @@ export function ChatView({ conv, status }: { conv: AiConversation; status: AiSta
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns.length, live?.answer.length, live?.tools.length]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (override?: string) => {
+    const text = (override ?? input).trim();
     if (!text || busy) return;
     setSendError(null);
-    setInput("");
+    if (override === undefined) setInput("");
     let turn: LiveTurn = {
       user_text: text,
       answer: "",
@@ -84,6 +95,15 @@ export function ChatView({ conv, status }: { conv: AiConversation; status: AiSta
       setLive(null);
     }
   };
+
+  const initialSent = useRef(false);
+  useEffect(() => {
+    if (!initialMessage || initialSent.current || conv.turns.length > 0) return;
+    initialSent.current = true;
+    onInitialSent?.();
+    void send(initialMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for a new report
+  }, [initialMessage]);
 
   const stop = () => void stopAnswer(conv.id);
 
@@ -109,7 +129,7 @@ export function ChatView({ conv, status }: { conv: AiConversation; status: AiSta
           onClick={() => setScopeOpen(true)}
           title="Chats the AI may read in this conversation"
         >
-          {conv.scope_chats.length} chats ✎
+          {conv.scope_chats.length} chat{conv.scope_chats.length === 1 ? "" : "s"} ✎
         </button>
         <span
           className={cn(

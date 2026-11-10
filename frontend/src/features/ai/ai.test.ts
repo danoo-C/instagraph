@@ -111,3 +111,33 @@ describe("formatTokens", () => {
     expect(formatTokens(250_000)).toBe("250k");
   });
 });
+
+describe("reports", () => {
+  it("every report builds a prompt and a title", async () => {
+    const { REPORTS } = await import("@/features/ai/reports");
+    const input = { chat: { id: 7, title: "Jana" }, year: 2024 };
+    expect(REPORTS.map((r) => r.id)).toEqual([
+      "chat-change",
+      "effort",
+      "personality",
+      "year",
+      "group",
+    ]);
+    for (const r of REPORTS) {
+      expect(r.prompt(input).length).toBeGreaterThan(40);
+      expect(r.label(input)).not.toContain("…");
+    }
+    expect(REPORTS[0]!.prompt(input)).toContain("Jana (chat_id 7)");
+    expect(REPORTS[3]!.prompt(input)).toContain("2024");
+  });
+
+  it("chat reports read only the picked chat", async () => {
+    const { REPORTS, reportScope } = await import("@/features/ai/reports");
+    const byId = Object.fromEntries(REPORTS.map((r) => [r.id, r]));
+    const input = { chat: { id: 7, title: "Jana" }, year: 2024 };
+    expect(reportScope(byId.effort!, input, [1, 2])).toEqual([7]);
+    expect(reportScope(byId.group!, input, [1, 2])).toEqual([7]);
+    expect(reportScope(byId.personality!, input, [1, 2])).toEqual([1, 2]);
+    expect(reportScope(byId.year!, input, [3])).toEqual([3]);
+  });
+});

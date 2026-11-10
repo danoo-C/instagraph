@@ -26,6 +26,7 @@ from instagraph.schemas.ai import (
     AiConversationList,
     AiConversationPatch,
     AiConversationSummary,
+    AiDefaultScope,
     AiDeleted,
     AiKeyInfo,
     AiKeySave,
@@ -35,7 +36,7 @@ from instagraph.schemas.ai import (
     AiProviderInfo,
     AiStatusResponse,
 )
-from instagraph.store.app_settings import AppSettings
+from instagraph.store.app_settings import AppSettings, get_settings_store
 from instagraph.store.dataset import Dataset, DatasetStore
 
 router = APIRouter(prefix="/api/ai", tags=["ai"], responses=ERROR_RESPONSES)
@@ -96,6 +97,17 @@ def ai_status(store: StoreDep, settings: SettingsDep) -> AiStatusResponse:
         providers=infos,
         api_key=_key_info(store),
     )
+
+
+@router.put("/default-scope", response_model=AiStatusResponse)
+def set_default_scope(body: AiDefaultScope, store: StoreDep, ds: DatasetDep) -> AiStatusResponse:
+    """Default allowed chats for new conversations, given as chat ids (stored as folder
+    keys, so the choice survives re-imports). Sends nothing anywhere."""
+    folders = _chat_folders(ds, body.chat_ids)
+    settings_store = get_settings_store()
+    new = settings_store.get().model_copy(update={"ai_default_scope": folders})
+    settings_store.update(new)
+    return ai_status(store, new)
 
 
 # --------------------------------------------------------------------------------------

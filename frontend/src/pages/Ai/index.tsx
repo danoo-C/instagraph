@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ErrorCard } from "@/components/ErrorCard";
 import { Skeleton } from "@/components/Skeleton";
 import { ChatView } from "@/features/ai/ChatView";
 import { NewConversationDialog } from "@/features/ai/NewConversationDialog";
+import { NewReportDialog } from "@/features/ai/NewReportDialog";
 import { SetupCard } from "@/features/ai/SetupCard";
 import {
   deleteConversation,
@@ -41,6 +42,9 @@ function Conversations({ status }: { status: AiStatus }) {
   const list = useAiConversations(true);
   const conv = useAiConversation(id, true);
   const [newOpen, setNewOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const location = useLocation();
+  const pending = (location.state as { send?: string } | null)?.send;
   const items = list.data?.items ?? [];
 
   const remove = async (convId: string) => {
@@ -56,6 +60,9 @@ function Conversations({ status }: { status: AiStatus }) {
         <button type="button" className="btn btn-primary" onClick={() => setNewOpen(true)}>
           + New conversation
         </button>
+        <button type="button" className="btn" onClick={() => setReportOpen(true)}>
+          New report
+        </button>
         <ul className="flex max-h-48 flex-col gap-0.5 overflow-y-auto md:max-h-none">
           {items.map((c) => (
             <li key={c.id} className="group flex items-center gap-1">
@@ -69,6 +76,11 @@ function Conversations({ status }: { status: AiStatus }) {
                 )}
                 title={c.title}
               >
+                {c.mode === "report" && (
+                  <span className="mr-1 rounded bg-surface-2 px-1 text-[10px] uppercase text-muted">
+                    Report
+                  </span>
+                )}
                 {c.title}
               </Link>
               <button
@@ -104,10 +116,26 @@ function Conversations({ status }: { status: AiStatus }) {
         ) : !conv.data ? (
           <Skeleton className="h-64 w-full" />
         ) : (
-          <ChatView key={conv.data.id} conv={conv.data} status={status} />
+          <ChatView
+            key={conv.data.id}
+            conv={conv.data}
+            status={status}
+            initialMessage={pending}
+            onInitialSent={() => navigate(location.pathname, { replace: true, state: null })}
+          />
         )}
       </section>
 
+      <NewReportDialog
+        open={reportOpen}
+        onOpenChange={setReportOpen}
+        status={status}
+        onCreated={(c, prompt) => {
+          setReportOpen(false);
+          void refreshAi();
+          navigate(`/ai/${c.id}`, { state: { send: prompt } });
+        }}
+      />
       <NewConversationDialog
         open={newOpen}
         onOpenChange={setNewOpen}

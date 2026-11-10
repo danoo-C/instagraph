@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Field, Section, Toggle, ConfirmDialog } from "@/features/settings/controls";
+import { Field, Section, Toggle, ConfirmDialog, RedactedNote } from "@/features/settings/controls";
 import type { SectionProps } from "@/features/settings/identity";
 import { deleteAllConversations, refreshAi, useAiStatus } from "@/features/ai/api";
 import { ApiKeyField } from "@/features/ai/ApiKeyField";
+import { DefaultChatsField, NicknamesField } from "@/features/ai/SettingsEditors";
 
 const EFFORTS = ["low", "medium", "high"] as const;
 
 /** Settings → AI assistant (docs/ai-assistant.md A4.5). Off by default. */
-export function AiSettingsSection({ s, update }: SectionProps) {
+export function AiSettingsSection({ s, update, redacted }: SectionProps) {
   const status = useAiStatus();
   const providers = status.data?.providers ?? [];
   const provider = providers.find((p) => p.id === s.ai_provider);
@@ -99,6 +100,14 @@ export function AiSettingsSection({ s, update }: SectionProps) {
         checked={s.ai_hide_names}
         onChange={(v) => update({ ai_hide_names: v })}
       />
+      {redacted ? (
+        <RedactedNote what="Default chats and nicknames are" />
+      ) : (
+        <>
+          {status.data?.has_data && <DefaultChatsField chatIds={status.data.default_chat_ids} />}
+          <NicknamesField s={s} update={update} />
+        </>
+      )}
       {s.ai_enabled && (
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className="btn btn-sm" onClick={() => setConfirmDelete(true)}>

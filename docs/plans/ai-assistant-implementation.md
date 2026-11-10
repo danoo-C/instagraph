@@ -1,6 +1,6 @@
 # Plan: AI assistant (public API provider + private Claude Code provider)
 
-**Status:** In progress. M1-M4 done; M5 (Reports mode, polish, README) next.
+**Status:** Done (M1-M5). The Anthropic API provider isn't live-tested yet (needs an API key).
 **Date:** 2026-11-09
 **Builds on:** `docs/ai-assistant.md` (the spec; "A5" etc. point to its sections). This plan only
 describes what changes or gets decided on top of it. Everything not mentioned here follows the spec.
@@ -228,9 +228,13 @@ you'll actually use first. The public code is still finished and tested without 
   Opus/Sonnet 5.5 (not Haiku). History is append-only; an unfinished turn (error, refusal, Stop,
   cut off) is rolled back. After a mid-output fallback only text before the last `fallback`
   block is echoed. Tested with a fake SDK client; not yet live-tested (needs an API key).
-- **Deferred:** Settings editors for the default chats and per-person aliases (the fields and
-  API exist); Slovak strings beyond the sidebar label (the app's pages are English-only today);
-  Reports mode (M5).
+- **M5 done:** Reports mode (5 ready-made, editable prompts: how a chat changed, who puts in
+  more effort, texting personality, highlights of a year, group dynamics), stored as
+  conversations with `mode: "report"` and sent automatically when started; Settings editors for
+  default chats (`PUT /api/ai/default-scope`, by chat id) and nicknames / "not in text";
+  README and spec §10 notes.
+- **Still open:** Slovak strings beyond the sidebar label (the app's pages are English-only
+  today); live test of the Anthropic API provider.
 
 ## Verification
 

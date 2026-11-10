@@ -174,3 +174,11 @@ def test_long_messages_up_to_100k_characters(ai: TestClient) -> None:
     url = f"/api/ai/conversations/{conv['id']}/messages"
     assert ai.post(url, json={"text": "a" * 50_000}).status_code == 200
     assert ai.post(url, json={"text": "a" * 100_001}).status_code == 422
+
+
+def test_default_scope_by_chat_ids(client: TestClient, fake: FakeProvider) -> None:
+    r = client.put("/api/ai/default-scope", json={"chat_ids": [1, 0]})
+    assert r.status_code == 200 and r.json()["default_chat_ids"] == [0, 1]
+    stored = client.get("/api/settings").json()["settings"]["ai_default_scope"]
+    assert stored == ["jananovakova_1", "partia_2"]  # folder keys survive re-imports
+    assert client.put("/api/ai/default-scope", json={"chat_ids": [42]}).status_code == 422

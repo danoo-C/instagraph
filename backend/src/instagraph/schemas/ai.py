@@ -29,6 +29,10 @@ class AiKeySave(ApiModel):
     key: str = Field(min_length=1, max_length=500)
 
 
+class AiDefaultScope(ApiModel):
+    chat_ids: list[int]
+
+
 class AiKeyTest(ApiModel):
     ok: bool
     message: str

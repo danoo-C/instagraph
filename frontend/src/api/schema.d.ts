@@ -25,6 +25,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ai/default-scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Default Scope
+         * @description Default allowed chats for new conversations, given as chat ids (stored as folder
+         *     keys, so the choice survives re-imports). Sends nothing anywhere.
+         */
+        put: operations["set_default_scope_api_ai_default_scope_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ai/key": {
         parameters: {
             query?: never;
@@ -1423,6 +1444,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** AiDefaultScope */
+        AiDefaultScope: {
+            /** Chat Ids */
+            chat_ids: number[];
         };
         /** AiDeleted */
         AiDeleted: {
@@ -5034,6 +5060,57 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiStatusResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    set_default_scope_api_ai_default_scope_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiDefaultScope"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

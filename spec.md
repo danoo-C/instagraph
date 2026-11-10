@@ -831,7 +831,7 @@ API docs are available at `http://127.0.0.1:8000/docs` (FastAPI Swagger UI).
 
 ## 10. Privacy and security
 - The backend binds to `127.0.0.1` by default and prints a clear warning if bound to another address.
-- No outbound network requests from the backend. The frontend is served with a strict Content-Security-Policy (`default-src 'self'; connect-src 'self'; img-src 'self' blob: data:`), all fonts and assets bundled, no CDNs, no analytics.
+- No outbound network requests from the backend, except the optional AI tab (off by default; see `docs/ai-assistant.md`): when the user turns it on and sends a message, the chats they allowed are sent to Anthropic's API from the backend with their own API key. The frontend is served with a strict Content-Security-Policy (`default-src 'self'; connect-src 'self'; img-src 'self' blob: data:`), all fonts and assets bundled, no CDNs, no analytics.
 - CORS is enabled only for the dev frontend origin.
 - **Local path import**: the path is resolved (`Path.resolve()`), must exist, and only `.json` and media files under it are read. Symlinks pointing outside it are ignored.
 - **Zip safety**: reject absolute paths and `..` in member names (zip slip), cap total uncompressed size and file count (zip bomb protection), read members by streaming.
