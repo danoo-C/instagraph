@@ -23,7 +23,8 @@ chat on its own, and each person in it.
 
 > **Private by design.** The backend listens on `127.0.0.1` only, makes no outbound network
 > requests, and the frontend loads no third-party resources. There is no analytics.
-> Your messages never leave your computer.
+> Your messages never leave your computer. (Only the installer goes online, to download the
+> packages the app needs.)
 
 *Screenshots show the built-in sample data (fake people and messages).*
 
@@ -58,7 +59,7 @@ chat on its own, and each person in it.
 - **Optional AI assistant (off by default):** ask Claude about your chats in plain language,
   or run ready-made reports. It uses the app's own statistics, cites messages you can open,
   reads only the chats you allow, and can hide names behind placeholders. Needs your own
-  Anthropic API key and `pip install 'instagraph[ai]'`.
+  Anthropic API key and the AI extra (`install.py --ai`, or `pip install 'instagraph[ai]'`).
 - Light and dark theme, keyboard accessible, and every chart can be shown as a table.
 
 ## Screenshots
@@ -83,33 +84,92 @@ chat on its own, and each person in it.
 
 ### Requirements
 
-- **Python 3.12+**
-- **Node.js 20.19+** and npm
-- `make` and `bash` (Linux, macOS, or WSL on Windows)
+The only thing you need is **Python 3.12 or newer**.
+
+| System | How to get Python 3.12+ |
+| --- | --- |
+| Windows | The installer from [python.org](https://www.python.org/downloads/), or `winget install Python.Python.3.12` |
+| macOS | The installer from [python.org](https://www.python.org/downloads/), or `brew install python@3.12`. The `python3` that comes with macOS is too old |
+| Linux | Ubuntu 24.04+, Debian 13+ and Fedora already have it. Otherwise `sudo apt install python3.12 python3.12-venv`. On Debian and Ubuntu, also install `python3-venv` |
+
+**Node.js is optional.** It's needed once, to build the app's interface. If Node.js 20.19+ is
+already installed, the installer uses it. If not, it offers to download a private copy just
+for Instagraph (about 30 MB). Nothing is installed system-wide, no admin rights are needed,
+and nothing else on your computer changes.
+
+**Supported systems:**
+
+- Windows 10 and 11 (x64 and ARM64)
+- macOS 12 or newer (Apple Silicon and Intel)
+- Linux on x64 or ARM64 with glibc (most distributions)
+
+Alpine and other musl-based Linux, and 32-bit systems, have no official Node.js downloads.
+There, install Node.js 20.19+ yourself first (for example `apk add nodejs npm`).
 
 ### Install
 
-```bash
-git clone https://github.com/danoo-C/instagraph
-cd instagraph
-make setup      # creates backend/.venv, installs Python and npm dependencies
-```
+1. Get the code: `git clone https://github.com/danoo-C/instagraph`, or on GitHub click
+   **Code → Download ZIP** and unpack it.
+2. Open a terminal in the `instagraph` folder and run:
+
+   ```bash
+   python3 install.py     # Windows: py install.py
+   ```
+
+   If `python3 --version` shows an older version, use the full name, e.g.
+   `python3.12 install.py`.
+
+The installer:
+
+- checks your Python version and tells you what to do if it's too old;
+- creates a virtual environment in `backend/.venv` and installs the Python packages into it;
+- builds the app's interface, with your Node.js or a private copy (see above);
+- asks whether you want the optional AI assistant;
+- asks whether to put an **Instagraph** icon on your desktop (on Windows also in the Start
+  menu, on Linux also in the app menu).
+
+**To update**, get the new code (`git pull`, or unpack a new ZIP over the old folder) and run
+the installer again. It only redoes what changed, and your data stays where it is. Close
+Instagraph first; the installer reminds you if it's still running.
+
+| Option | What it does |
+| --- | --- |
+| `--yes` | Accept all defaults and ask no questions |
+| `--ai` | Also install the optional AI assistant (`--no-ai` to skip it) |
+| `--no-shortcut` | Don't create a desktop icon |
+| `--uninstall` | Remove Instagraph's icon and installed files (see [Uninstall](#uninstall)) |
+
+`python3 install.py --help` lists all options.
+
+The installer is the only part of Instagraph that goes online. It downloads Python packages
+from PyPI, the interface's packages from the npm registry and, if needed, Node.js from
+nodejs.org. The app itself makes no network requests.
+
+> [!NOTE]
+> **WSL users:** keep the clone in the Linux file system (`~/...`), not under `/mnt/c`. It is
+> much faster. Use one clone per system: an install made from Windows doesn't work from WSL,
+> and the other way round. If you want Instagraph on both, clone it twice.
 
 ### Run
 
+Double-click the **Instagraph** icon. Or run this in the `instagraph` folder:
+
 ```bash
-./launch
+python3 run.py     # Windows: py run.py
 ```
 
-Open **<http://127.0.0.1:8000>**. `./launch` rebuilds the frontend first if anything changed
-since the last build, then starts the server.
+Any Python 3.12+ works here: `run.py` starts the server from `backend/.venv` by itself.
 
-| Command | What it does |
+A window opens with the server log, and the app opens in your browser at
+**<http://127.0.0.1:8000>**. Closing the window (or pressing Ctrl+C in it) stops the app. If
+Instagraph is already running, starting it again just opens the browser.
+
+| Option | What it does |
 | --- | --- |
-| `./launch` | Serve on this computer only (`127.0.0.1:8000`) |
-| `./launch --lan` | Also serve on your local network, e.g. to open it on your phone. Prints the URLs to use |
-| `./launch --port 9000` | Use another port (`PORT=9000 ./launch` works too) |
-| `./launch --rebuild` | Force a frontend rebuild |
+| `run.py` | Serve on this computer only (`127.0.0.1:8000`) |
+| `run.py --lan` | Also serve on your local network, e.g. to open it on your phone. Prints the URLs to use |
+| `run.py --port 9000` | Use another port |
+| `run.py --no-browser` | Don't open the browser |
 
 > [!WARNING]
 > With `--lan`, anyone on your network who can reach your computer can open the app and read
@@ -119,6 +179,17 @@ since the last build, then starts the server.
 > **WSL users:** in the default NAT networking mode, other devices can't reach WSL. For
 > `--lan`, set `networkingMode=mirrored` in `%UserProfile%\.wslconfig`, run `wsl --shutdown`,
 > and allow the port in Windows Firewall.
+
+### Uninstall
+
+```bash
+python3 install.py --uninstall     # Windows: py install.py --uninstall
+```
+
+This removes the desktop icon and `backend/.venv` (including the private Node.js, if one was
+downloaded). It asks before deleting the built interface. It **never deletes your data**.
+To remove that too, use **Settings → Clear all data** in the app first, or delete the `data/`
+folder yourself. Deleting the whole `instagraph` folder removes everything.
 
 ### Get your Instagram export
 
@@ -158,7 +229,7 @@ Environment variables (or a `.env` file in `backend/`):
 | `INSTAGRAPH_HOST` | `127.0.0.1` | Bind address (a warning is logged for anything else) |
 | `INSTAGRAPH_PORT` | `8000` | Port |
 | `INSTAGRAPH_WORKERS` | CPU count − 1 | Number of processes used to parse the export |
-| `INSTAGRAPH_ALLOWED_HOSTS` | (empty) | Extra hostnames accepted in the `Host` header (`./launch --lan` sets this) |
+| `INSTAGRAPH_ALLOWED_HOSTS` | (empty) | Extra hostnames accepted in the `Host` header (`--lan` sets this) |
 | `INSTAGRAPH_CORS_ORIGINS` | `http://localhost:5173` | Allowed CORS origins (dev server only) |
 | `ANTHROPIC_API_KEY` | (empty) | Optional: API key for the AI tab (otherwise set it in Settings → AI) |
 
@@ -169,16 +240,36 @@ and anonymize mode are in the app's **Settings** page.
 
 ## Development
 
+For development you also need **Node.js 20.19+** with npm, and `make` and `bash` (Linux,
+macOS, or WSL on Windows).
+
+```bash
+git clone https://github.com/danoo-C/instagraph
+cd instagraph
+make setup      # creates backend/.venv, installs Python (with dev tools) and npm dependencies
+./launch        # rebuilds the frontend if anything changed, then starts the server
+```
+
+`make setup` and `install.py` use the same `backend/.venv`, so you can mix them. Running
+`install.py` later keeps the dev tools.
+
+| Command | What it does |
+| --- | --- |
+| `./launch` | Serve on this computer only (`127.0.0.1:8000`) |
+| `./launch --lan` | Also serve on your local network. Prints the URLs to use |
+| `./launch --port 9000` | Use another port (`PORT=9000 ./launch` works too) |
+| `./launch --rebuild` | Force a frontend rebuild |
+
 ```bash
 make dev        # backend on :8000 + Vite dev server on :5173, both with hot reload
 ```
 
 | Command | What it does |
 | --- | --- |
-| `make test` | Backend (pytest) and frontend (Vitest) tests |
+| `make test` | Backend (pytest), installer (pytest) and frontend (Vitest) tests |
 | `make e2e` | Browser end-to-end test with Playwright (needs Chromium) |
-| `make lint` | Ruff + mypy `--strict`, ESLint + TypeScript |
-| `make format` | Auto-format the backend |
+| `make lint` | Ruff + mypy `--strict` (backend and installer), ESLint + TypeScript |
+| `make format` | Auto-format the backend and the installer |
 | `make gen-types` | Regenerate the frontend API types from the FastAPI OpenAPI schema |
 
 API docs are available at <http://127.0.0.1:8000/docs> while the server runs.
@@ -187,7 +278,11 @@ API docs are available at <http://127.0.0.1:8000/docs> while the server runs.
 
 ```
 instagraph/
-├── launch              # build-if-needed + run script
+├── install.py          # cross-platform installer (install, update, uninstall)
+├── run.py              # cross-platform launcher, started by the desktop icon
+├── installer/          # code behind install.py and run.py (standard library only)
+├── assets/             # app icon (SVG, PNG, ICO, ICNS)
+├── launch              # build-if-needed + run script for developers
 ├── Makefile            # setup, dev, build, test, lint, gen-types
 ├── spec.md             # full specification
 ├── backend/            # Python 3.12, FastAPI, Polars, Parquet

@@ -98,7 +98,8 @@ def cpu_arch() -> Literal["x64", "arm64", "other"]:
                 return "arm64"
     if machine in ("x86_64", "amd64", "x64"):
         return "x64"
-    if machine in ("arm64", "aarch64", "armv8l"):
+    # armv8l is a 32-bit ARM system on a 64-bit kernel, so it is not arm64.
+    if machine in ("arm64", "aarch64"):
         return "arm64"
     return "other"
 

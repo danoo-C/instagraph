@@ -5,6 +5,8 @@ VENV     := $(BACKEND)/.venv
 PY       := $(VENV)/bin/python
 HOST     ?= 127.0.0.1
 PORT     ?= 8000
+# Cross-platform installer code (repo root, linted with the root ruff.toml).
+INSTALLER := installer install.py run.py
 
 .PHONY: setup dev dev-backend dev-frontend build run test e2e lint format gen-types
 
@@ -31,6 +33,7 @@ run:
 
 test:
 	cd $(BACKEND) && .venv/bin/pytest
+	$(PY) -m pytest installer/tests
 	cd $(FRONTEND) && npm test
 
 # Browser end-to-end test (§13): builds the frontend, starts the backend on 127.0.0.1 with a
@@ -41,10 +44,13 @@ e2e:
 
 lint:
 	cd $(BACKEND) && .venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/mypy --strict src
+	$(VENV)/bin/ruff check $(INSTALLER) && $(VENV)/bin/ruff format --check $(INSTALLER)
+	$(VENV)/bin/mypy --strict --python-version 3.12 $(INSTALLER)
 	cd $(FRONTEND) && npm run lint && npm run typecheck
 
 format:
 	cd $(BACKEND) && .venv/bin/ruff check --fix . && .venv/bin/ruff format .
+	$(VENV)/bin/ruff check --fix $(INSTALLER) && $(VENV)/bin/ruff format $(INSTALLER)
 
 # Regenerate frontend/src/api/schema.d.ts from FastAPI's app.openapi().
 gen-types:
