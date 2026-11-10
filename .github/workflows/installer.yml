@@ -28,8 +28,8 @@ jobs:
     env:
       PORT: "8765"
       VENV_PY: ${{ matrix.os == 'windows-latest' && 'backend/.venv/Scripts/python.exe' || 'backend/.venv/bin/python' }}
-      # Windows pipes default to cp1252; keep the installer's output readable in the log.
-      PYTHONIOENCODING: utf-8
+      # No PYTHONIOENCODING here on purpose: users' redirected output on Windows is cp1252,
+      # and the installer must cope with that.
       PYTHONUNBUFFERED: "1"
 
     steps:

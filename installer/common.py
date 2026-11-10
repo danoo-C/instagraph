@@ -10,11 +10,16 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shlex
+import shutil
 import socket
+import ssl
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -27,7 +32,17 @@ from installer import ui
 
 # --- Paths ---------------------------------------------------------------------------
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+
+def _repo_root() -> Path:
+    here = Path(__file__)
+    # On Windows, resolve() turns a mapped drive (H:\) into its \\server\share form, which
+    # cmd.exe (and so npm) can't use as a working folder. abspath keeps the drive letter.
+    if os.name == "nt":
+        return Path(os.path.abspath(here)).parent.parent
+    return here.resolve().parent.parent
+
+
+REPO_ROOT = _repo_root()
 BACKEND_DIR = REPO_ROOT / "backend"
 FRONTEND_DIR = REPO_ROOT / "frontend"
 DIST_DIR = FRONTEND_DIR / "dist"
@@ -41,7 +56,8 @@ RUN_PY = REPO_ROOT / "run.py"
 #: Written by run.py while the server runs: {"pid", "port", "started"}.
 RUN_FILE = VENV_DIR / "instagraph-run.json"
 #: Written by install.py: what it created (shortcuts etc.), for re-runs and --uninstall.
-INSTALL_RECORD = VENV_DIR / "instagraph-install.json"
+#: Outside the venv, so it survives recreating the venv.
+INSTALL_RECORD = BACKEND_DIR / ".instagraph-install.json"
 #: Node.js downloaded by install.py when no suitable system Node exists.
 PRIVATE_NODE_DIR = VENV_DIR / "node"
 
@@ -54,6 +70,11 @@ MIN_PYTHON = (3, 12)
 IS_WINDOWS = os.name == "nt"
 IS_MACOS = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
+
+
+def is_unc_path(path: Path) -> bool:
+    """True for a Windows network path (\\\\server\\share\\...), which cmd.exe can't ``cd`` into."""
+    return str(path).startswith(("\\\\", "//"))
 
 
 def is_wsl() -> bool:
@@ -164,6 +185,7 @@ def run(
             [str(c) for c in cmd],
             cwd=cwd,
             env=dict(env) if env is not None else None,
+            stdin=subprocess.DEVNULL,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -202,6 +224,9 @@ def run_tee(
             [str(c) for c in cmd],
             cwd=cwd,
             env=dict(env) if env is not None else None,
+            # No input: npm.cmd is a batch file, and after Ctrl+C cmd.exe would otherwise
+            # keep waiting for "Terminate batch job (Y/N)?".
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -215,7 +240,8 @@ def run_tee(
     assert proc.stdout is not None
     with proc:
         for raw in proc.stdout:
-            line = raw.rstrip()
+            # Tools force colours on Windows and in CI; keep the log plain.
+            line = strip_ansi(raw.rstrip())
             lines.append(line)
             if ui.verbose() or show(line):
                 ui.info(line)
@@ -227,6 +253,22 @@ def run_tee(
             output=output,
         )
     return output
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove terminal colour codes."""
+    return _ANSI.sub("", text)
+
+
+def python_child_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Environment for a Python child whose output we read: UTF-8 even on Windows pipes."""
+    env = dict(os.environ if base is None else base)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
 
 
 def env_with_path(prepend: Path, base: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -286,7 +328,10 @@ def port_in_use(port: int, host: str = "127.0.0.1", timeout: float = 0.5) -> boo
         return sock.connect_ex((host, port)) == 0
 
 
-def probe_instagraph(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> ProbeResult:
+_TITLE = re.compile(rb'"info"\s*:\s*\{\s*"title"\s*:\s*"([^"]*)"')
+
+
+def probe_instagraph(port: int, host: str = "127.0.0.1", timeout: float = 3.0) -> ProbeResult:
     """What is listening on ``host:port``?
 
     ``"instagraph"``: an Instagraph server (``/openapi.json`` has ``info.title`` Instagraph).
@@ -295,10 +340,12 @@ def probe_instagraph(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -
     url = f"http://{host}:{port}/openapi.json"
     try:
         with _LOCAL_OPENER.open(url, timeout=timeout) as resp:
-            body = json.loads(resp.read(2_000_000).decode("utf-8"))
-        title = body.get("info", {}).get("title") if isinstance(body, dict) else None
-        return "instagraph" if title == APP_NAME else "other"
-    except (urllib.error.HTTPError, ValueError, UnicodeDecodeError):
+            # The schema is large (over 500 KB); its start is enough. FastAPI writes
+            # {"openapi": ..., "info": {"title": ...}} first.
+            head = resp.read(8192)
+        match = _TITLE.search(head)
+        return "instagraph" if match and match.group(1) == APP_NAME.encode() else "other"
+    except urllib.error.HTTPError:
         return "other"
     except (urllib.error.URLError, OSError, TimeoutError):
         return "other" if port_in_use(port, host) else "none"
@@ -319,6 +366,49 @@ def atomic_write_text(path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def rename_with_retry(src: Path, dst: Path, *, attempts: int = 10, delay: float = 0.5) -> None:
+    """``os.rename``, retried on Windows while antivirus or indexing briefly locks files."""
+    for attempt in range(attempts):
+        try:
+            os.rename(src, dst)
+            return
+        except PermissionError:
+            if not IS_WINDOWS or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
+def remove_tree(path: Path) -> None:
+    """Delete a folder. On Windows, clears read-only flags and retries briefly when locked.
+
+    Never follows symlinks or junctions out of ``path``. Raises OSError if it can't delete.
+    """
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+
+    def onexc(func: Callable[..., Any], name: str, exc: BaseException) -> None:
+        if not isinstance(exc, PermissionError):
+            raise exc
+        with contextlib.suppress(OSError):
+            os.chmod(name, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+        if os.path.isdir(name) and not os.path.islink(name):
+            os.rmdir(name)
+        else:
+            os.unlink(name)
+
+    for attempt in range(5):
+        try:
+            shutil.rmtree(path, onexc=onexc)
+            return
+        except OSError:
+            if not IS_WINDOWS or attempt == 4:
+                raise
+            time.sleep(0.5)
 
 
 def read_json(path: Path) -> dict[str, Any] | None:
@@ -365,7 +455,7 @@ def remove_run_file(path: Path = RUN_FILE, *, pid: int | None = None) -> None:
 
 # Install record (install.py) ---------------------------------------------------------
 #
-# {"version": 1, "repo": "<abs path>", "updated": "<iso>",
+# {"version": 1, "repo": "<abs path>", "os": "Windows|macOS|Linux|WSL", "updated": "<iso>",
 #  "shortcuts": ["<abs path>", ...], "ai": true|false, "node": "private"|"system"|null}
 
 
@@ -374,27 +464,87 @@ def read_install_record(path: Path = INSTALL_RECORD) -> dict[str, Any]:
 
 
 def write_install_record(record: Mapping[str, Any], path: Path = INSTALL_RECORD) -> None:
-    data = {"version": 1, "repo": str(REPO_ROOT), **record, "updated": now_iso()}
+    data = {"version": 1, "repo": str(REPO_ROOT), "os": os_label(), **record, "updated": now_iso()}
     atomic_write_text(path, json.dumps(data, indent=2) + "\n")
 
 
 # --- Configuration -------------------------------------------------------------------
 
 
+def read_env_file(path: Path = BACKEND_DIR / ".env") -> dict[str, str]:
+    """``KEY=value`` lines of a ``.env`` file (keys upper-cased, quotes stripped)."""
+    values: dict[str, str] = {}
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, raw = line.removeprefix("export ").partition("=")
+            if sep:
+                values[key.strip().upper()] = raw.strip().strip("'\"")
+    return values
+
+
+def setting(name: str, env_file: Path = BACKEND_DIR / ".env") -> str | None:
+    """A backend setting as the server sees it: environment first, then ``backend/.env``.
+
+    Matches names case-insensitively, like pydantic-settings. Empty values count as unset.
+    """
+    for key, value in os.environ.items():
+        if key.upper() == name.upper() and value:
+            return value
+    return read_env_file(env_file).get(name.upper()) or None
+
+
+def data_dir(env_file: Path = BACKEND_DIR / ".env") -> Path:
+    """Where the server keeps imported data (``INSTAGRAPH_DATA_DIR`` or ``<repo>/data``)."""
+    value = setting("INSTAGRAPH_DATA_DIR", env_file)
+    if not value:
+        return DATA_DIR
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (BACKEND_DIR / path)
+
+
 def configured_port(env_file: Path = BACKEND_DIR / ".env") -> int:
     """``INSTAGRAPH_PORT`` from the environment or ``backend/.env``, else 8000."""
-    value = os.environ.get("INSTAGRAPH_PORT")
-    if value is None:
-        with contextlib.suppress(OSError):
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                key, sep, raw = line.strip().partition("=")
-                if sep and key.strip() == "INSTAGRAPH_PORT":
-                    value = raw.strip().strip("'\"")
+    value = setting("INSTAGRAPH_PORT", env_file)
     try:
         port = int(value) if value else DEFAULT_PORT
     except ValueError:
         return DEFAULT_PORT
     return port if 0 < port < 65536 else DEFAULT_PORT
+
+
+def https_context() -> ssl.SSLContext:
+    """An SSL context for downloads.
+
+    Python from python.org on macOS has no certificates until "Install Certificates.command"
+    is run; fall back to the system's bundle so HTTPS still works.
+    """
+    ctx = ssl.create_default_context()
+    if IS_MACOS and not ctx.cert_store_stats().get("x509_ca"):
+        for bundle in ("/etc/ssl/cert.pem", "/private/etc/ssl/cert.pem"):
+            if os.path.exists(bundle):
+                with contextlib.suppress(ssl.SSLError, OSError):
+                    ctx.load_verify_locations(bundle)
+                    break
+    return ctx
+
+
+def is_certificate_error(exc: BaseException) -> bool:
+    """True if a download failed because the certificate couldn't be checked."""
+    reason = getattr(exc, "reason", exc)
+    return isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(
+        reason
+    )
+
+
+CERTIFICATE_HINT = (
+    "Python couldn't check the website's security certificate. On a Mac with Python from "
+    "python.org, open the Python folder in Applications and double-click "
+    '"Install Certificates.command", then run the installer again. Behind a company proxy, '
+    "ask IT for its certificate."
+)
 
 
 def backend_version() -> str:

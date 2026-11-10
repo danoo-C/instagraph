@@ -5,6 +5,8 @@ Standard library only. Call :func:`configure` once at startup.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 from typing import TextIO
@@ -19,6 +21,12 @@ def configure(*, assume_yes: bool = False, verbose: bool = False) -> None:
     global _assume_yes, _verbose, _color
     _assume_yes = assume_yes
     _verbose = verbose
+    # On Windows, output redirected to a file or pipe uses the ANSI code page with strict
+    # errors, so printing a character it lacks (Vite's "✓", a name in a path) would crash.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            with contextlib.suppress(Exception):
+                stream.reconfigure(errors="replace")
     _color = _supports_color(sys.stdout)
 
 
@@ -34,10 +42,26 @@ def _supports_color(stream: TextIO) -> bool:
     if os.environ.get("NO_COLOR") or not hasattr(stream, "isatty") or not stream.isatty():
         return False
     if os.name == "nt":
-        # Windows 10+ consoles understand ANSI codes once VT processing is on; this
-        # empty system() call switches it on for the current console.
-        os.system("")
+        return _enable_windows_vt()
     return True
+
+
+def _enable_windows_vt() -> bool:
+    """Switch on ANSI escape codes in a Windows 10+ console. False if that's not possible."""
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined,unused-ignore]
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        enable_virtual_terminal_processing = 0x0004
+        return bool(
+            kernel32.SetConsoleMode(handle, mode.value | enable_virtual_terminal_processing)
+        )
+    except (AttributeError, OSError):
+        return False
 
 
 def _paint(code: str, text: str) -> str:

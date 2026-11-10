@@ -143,7 +143,8 @@ Instagraph first; the installer reminds you if it's still running.
 
 The installer is the only part of Instagraph that goes online. It downloads Python packages
 from PyPI, the interface's packages from the npm registry and, if needed, Node.js from
-nodejs.org. The app itself makes no network requests.
+nodejs.org. The app itself makes no network requests (unless you turn on the optional AI
+assistant).
 
 > [!NOTE]
 > **WSL users:** keep the clone in the Linux file system (`~/...`), not under `/mnt/c`. It is

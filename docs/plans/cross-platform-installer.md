@@ -182,7 +182,8 @@ with `--verbose`.
 
 All three use absolute paths to `<venv python>`, `run.py` and the icon, so they work no matter
 which folder they're started from. `--uninstall` removes exactly what was created. The paths
-are saved in `backend/.venv/instagraph-install.json`, so uninstall doesn't have to guess.
+are saved in `backend/.instagraph-install.json` (outside the venv, so it survives recreating the
+venv), so uninstall doesn't have to guess.
 If a shortcut with the same name already exists, case C decides whether it's updated,
 replaced or kept.
 
@@ -355,7 +356,7 @@ backend change outside this plan.
 
 ## `--uninstall`
 
-Removes the shortcuts listed in `instagraph-install.json` and `backend/.venv`, including the
+Removes the shortcuts listed in `backend/.instagraph-install.json`, that file, and `backend/.venv`, including the
 private Node in it. Asks before
 deleting `frontend/dist` and `frontend/node_modules`. It **never deletes `data/`**: it prints
 where the data is and says to delete it with Settings → Clear all data, or by hand.
