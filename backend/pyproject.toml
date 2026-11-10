@@ -22,6 +22,9 @@ dependencies = [
     "mutagen>=1.47",
     "python-multipart>=0.0.9",
     "sse-starlette>=2.1",
+    # Time zone database for zoneinfo. Windows has none built in, so without this every
+    # ZoneInfo("UTC") (also inside polars) fails there.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

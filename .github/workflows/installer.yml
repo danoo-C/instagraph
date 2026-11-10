@@ -85,6 +85,42 @@ jobs:
           sys.exit(f"No answer from {url} within 60 s")
           EOF
 
+      # Starting isn't enough: a real import catches problems that only show up on one OS
+      # (on Windows, imports failed without the tzdata package). Import a small sample
+      # dataset through the API and load the overview.
+      - name: Import sample data
+        run: |
+          python - <<'EOF'
+          import json, os, sys, time, urllib.request
+
+          base = f"http://127.0.0.1:{os.environ['PORT']}"
+
+
+          def call(method, path, body=None):
+              data = None if body is None else json.dumps(body).encode()
+              req = urllib.request.Request(
+                  base + path, data=data, method=method,
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.load(resp)
+
+
+          job = call("POST", "/api/import/sample", {"messages": 2000})["job_id"]
+          deadline = time.monotonic() + 300
+          while time.monotonic() < deadline:
+              state = call("GET", f"/api/import/jobs/{job}")
+              if state["status"] == "done":
+                  break
+              if state["status"] in ("error", "cancelled"):
+                  sys.exit(f"Sample import failed: {state.get('error')}")
+              time.sleep(1)
+          else:
+              sys.exit("Sample import didn't finish within 300 s")
+          call("GET", "/api/overview")
+          print("Sample import done, overview loads")
+          EOF
+
       # Updating while the app runs must stop with a clear message (case A in the plan):
       # on Windows, pip can't replace files the server has open. The run file holds port
       # 8765, so install.py finds the server even though it isn't on the default port.
