@@ -6,6 +6,7 @@ See docs/plans/cross-platform-installer.md, section "Private Node.js".
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import http.client
 import json
@@ -13,6 +14,7 @@ import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -31,6 +33,9 @@ from installer import common, ui
 
 #: Major version downloaded when no suitable system Node exists (current LTS).
 NODE_MAJOR = 24
+#: Node 24 needs macOS 13.5 or newer; older macOS gets this (still LTS) major instead.
+NODE_MAJOR_OLD_MACOS = 22
+_NODE_MAJOR_MIN_MACOS = (13, 5)
 
 #: Where official Node.js builds, index.json and SHASUMS256.txt live.
 NODE_DIST_URL = "https://nodejs.org/dist"
@@ -44,12 +49,21 @@ _INSTALL_NODE_HINT = (
     "You can also install Node.js 20.19 or newer yourself from https://nodejs.org "
     "and run the installer again."
 )
+_DISK_HINT_WINDOWS = (
+    "Make sure the disk isn't full. A long folder path is another common cause: move "
+    "Instagraph to a shorter folder path (for example C:\\Instagraph), or enable long paths "
+    "in Windows. Then run the installer again."
+)
+_DISK_HINT_OTHER = (
+    "Make sure the disk isn't full and that you can write to this folder, then run the "
+    "installer again."
+)
 _TIMEOUT = 30.0  # seconds, per network read
 _CHUNK = 256 * 1024
 _DOWNLOAD_ATTEMPTS = 2  # connections do get cut off now and then
 
-#: Opens a URL and returns a readable response (``urllib.request.urlopen`` by default; it
-#: honours HTTPS_PROXY). Tests inject their own.
+#: Opens a URL and returns a readable response (see :func:`_default_opener`; it honours
+#: HTTPS_PROXY). Tests inject their own.
 Opener = Callable[[str], IO[bytes]]
 
 
@@ -86,6 +100,21 @@ def node_version_ok(version: tuple[int, int, int]) -> bool:
     if major == 22:
         return minor >= 12
     return major >= 23
+
+
+def node_major(*, macos: bool | None = None, mac_version: str | None = None) -> int:
+    """The Node major to download: NODE_MAJOR, or NODE_MAJOR_OLD_MACOS before macOS 13.5."""
+    macos = common.IS_MACOS if macos is None else macos
+    if not macos:
+        return NODE_MAJOR
+    raw = platform.mac_ver()[0] if mac_version is None else mac_version
+    try:
+        parts = tuple(int(p) for p in raw.split(".")[:2])
+    except ValueError:
+        return NODE_MAJOR
+    if parts and parts < _NODE_MAJOR_MIN_MACOS:
+        return NODE_MAJOR_OLD_MACOS
+    return NODE_MAJOR
 
 
 def _node_version(node: Path) -> tuple[int, int, int] | None:
@@ -126,11 +155,34 @@ def find_system_node() -> NodeTool | None:
     node, version = candidate
     if version is None or not node_version_ok(version):
         return None
-    npm = shutil.which("npm")  # finds npm.cmd on Windows
+    npm = _find_npm(node)
     if npm is None:
         ui.detail(f"Node {format_version(version)} found at {node}, but npm is missing.")
         return None
-    return NodeTool(node=node, npm=Path(npm), bin_dir=node.parent, version=version, private=False)
+    return NodeTool(node=node, npm=npm, bin_dir=node.parent, version=version, private=False)
+
+
+def _find_npm(node: Path, *, windows: bool | None = None) -> Path | None:
+    """npm for the Node at ``node``.
+
+    On Windows, ``shutil.which("npm")`` can return the extensionless shell script (Python
+    3.12.0), which Popen can't run (WinError 193). So prefer ``npm.cmd`` next to node.exe,
+    then ``npm.cmd`` on PATH, then an ``npm`` with a runnable extension (e.g. Volta's npm.exe).
+    """
+    windows = common.IS_WINDOWS if windows is None else windows
+    if not windows:
+        found = shutil.which("npm")
+        return Path(found) if found else None
+    beside = node.parent / "npm.cmd"
+    if beside.is_file():
+        return beside
+    found = shutil.which("npm.cmd")
+    if found:
+        return Path(found)
+    found = shutil.which("npm")
+    if found and Path(found).suffix.lower() in (".cmd", ".exe", ".bat"):
+        return Path(found)
+    return None
 
 
 def _private_layout(node_dir: Path, *, windows: bool) -> tuple[Path, Path, Path]:
@@ -144,7 +196,7 @@ def _private_layout(node_dir: Path, *, windows: bool) -> tuple[Path, Path, Path]
 def find_private_node(
     *, node_dir: Path | None = None, windows: bool | None = None
 ) -> NodeTool | None:
-    """The private Node in backend/.venv/node, if present, working and of NODE_MAJOR."""
+    """The private Node in backend/.venv/node, if present, working and of :func:`node_major`."""
     node_dir = common.PRIVATE_NODE_DIR if node_dir is None else node_dir
     windows = common.IS_WINDOWS if windows is None else windows
     node, npm, bin_dir = _private_layout(node_dir, windows=windows)
@@ -155,7 +207,7 @@ def find_private_node(
     if recorded is None or not node.is_file() or not npm.exists():
         return None
     version = _node_version(node)
-    if version is None or version[0] != NODE_MAJOR:
+    if version is None or version[0] != node_major():
         return None
     return NodeTool(node=node, npm=npm, bin_dir=bin_dir, version=version, private=True)
 
@@ -280,11 +332,6 @@ def verify_sha256(path: Path, expected: str) -> None:
 # --- Downloading ---------------------------------------------------------------------
 
 
-def _default_opener(url: str) -> IO[bytes]:
-    response: IO[bytes] = urllib.request.urlopen(url, timeout=_TIMEOUT)
-    return response
-
-
 def _check_url(url: str) -> None:
     """Only HTTPS, except to this computer (tests)."""
     parts = urllib.parse.urlsplit(url)
@@ -295,15 +342,56 @@ def _check_url(url: str) -> None:
     raise common.InstallError(f"Refusing to download over an insecure connection: {url}")
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows redirects only to URLs that :func:`_check_url` accepts."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        _check_url(urllib.parse.urljoin(req.full_url, newurl))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+@functools.cache
+def _https_context() -> ssl.SSLContext:
+    return common.https_context()
+
+
+def _default_opener(url: str) -> IO[bytes]:
+    """``urlopen`` with the macOS certificate fallback and HTTPS-only redirects.
+
+    Built per call, so it picks up the current HTTPS_PROXY (build_opener adds ProxyHandler).
+    """
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=_https_context()), _HttpsOnlyRedirects()
+    )
+    response: IO[bytes] = opener.open(url, timeout=_TIMEOUT)
+    return response
+
+
 def _network_error(url: str, exc: BaseException) -> common.InstallError:
     reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
     if isinstance(exc, urllib.error.HTTPError):
         reason = f"HTTP {exc.code} {exc.reason}"
+    if common.is_certificate_error(exc):
+        return common.InstallError(
+            f"Could not download {url}: {reason}.", hint=common.CERTIFICATE_HINT
+        )
     return common.InstallError(
         f"Could not download {url}: {reason}.",
         hint="Check your internet connection (and HTTPS_PROXY if you are behind a proxy). "
         + _INSTALL_NODE_HINT,
     )
+
+
+def _disk_hint() -> str:
+    return _DISK_HINT_WINDOWS if common.IS_WINDOWS else _DISK_HINT_OTHER
 
 
 _NETWORK_ERRORS = (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError)
@@ -388,12 +476,54 @@ def _download(url: str, dest: Path, opener: Opener, label: str) -> None:
 # --- Unpacking -----------------------------------------------------------------------
 
 
+def _unsafe(name: str) -> common.InstallError:
+    return common.InstallError(f"Unsafe path in the Node.js archive: {name!r}")
+
+
+def _member_parts(name: str) -> tuple[str, ...]:
+    return PurePosixPath(name.replace("\\", "/")).parts
+
+
 def _check_member(name: str) -> None:
     """Refuse absolute paths, drive letters and ``..`` in an archive entry name."""
     norm = name.replace("\\", "/")
     parts = PurePosixPath(norm).parts
     if norm.startswith("/") or (parts and ":" in parts[0]) or ".." in parts:
-        raise common.InstallError(f"Unsafe path in the Node.js archive: {name!r}")
+        raise _unsafe(name)
+
+
+def _check_tar_links(members: list[tarfile.TarInfo]) -> None:
+    """Refuse links that point outside the archive's top folder, or that go through links.
+
+    ``filter="data"`` checks this too, but has known bypasses before Python 3.12.11 /
+    3.13.4. Paths are resolved by name only, so nothing may pass through another link
+    (where the real location would differ from the name).
+    """
+    links = {_member_parts(m.name): m for m in members if m.issym() or m.islnk()}
+    for parts in (_member_parts(m.name) for m in members):
+        if any(parts[:i] in links for i in range(1, len(parts))):
+            raise common.InstallError(
+                f"Unsafe path in the Node.js archive: {'/'.join(parts)!r} is inside a link."
+            )
+    for parts, member in links.items():
+        target = member.linkname.replace("\\", "/")
+        if not target or target.startswith("/") or ":" in target.split("/")[0]:
+            raise _unsafe(f"{member.name} -> {member.linkname}")
+        # Symlinks are relative to their folder, hard links to the archive root.
+        stack = list(parts[:-1]) if member.issym() else []
+        target_parts = PurePosixPath(target).parts
+        for i, part in enumerate(target_parts):
+            if part == "..":
+                if not stack:
+                    raise _unsafe(f"{member.name} -> {member.linkname}")
+                stack.pop()
+                continue
+            stack.append(part)
+            # Pointing at another link is fine (it is checked too); going through one isn't.
+            if i < len(target_parts) - 1 and tuple(stack) in links:
+                raise _unsafe(f"{member.name} -> {member.linkname}")
+        if not stack or stack[0] != parts[0]:
+            raise _unsafe(f"{member.name} -> {member.linkname}")
 
 
 def safe_unpack(archive: Path, dest: Path) -> None:
@@ -406,15 +536,21 @@ def safe_unpack(archive: Path, dest: Path) -> None:
                 zf.extractall(dest)
         else:
             with tarfile.open(archive, "r:*") as tf:
-                for member in tf.getmembers():
+                members = tf.getmembers()
+                for member in members:
                     _check_member(member.name)
-                # "data" refuses absolute paths, "..", links leaving dest and device files,
-                # and keeps the owner's exec bits.
+                _check_tar_links(members)
+                # "data" also refuses absolute paths, "..", links leaving dest and device
+                # files, and keeps the owner's exec bits.
                 tf.extractall(dest, filter="data")
     except (tarfile.TarError, zipfile.BadZipFile, EOFError) as exc:
         raise common.InstallError(
             f"Could not unpack the Node.js archive ({archive.name}): {exc}",
             hint=_INSTALL_NODE_HINT,
+        ) from exc
+    except OSError as exc:
+        raise common.InstallError(
+            f"Could not unpack the Node.js archive into {dest}: {exc}", hint=_disk_hint()
         ) from exc
 
 
@@ -437,29 +573,28 @@ def replace_dir(new: Path, target: Path) -> None:
     old: Path | None = None
     if target.exists() or target.is_symlink():
         old = target.with_name(f".{target.name}-old-{os.getpid()}-{time.time_ns()}")
-        os.replace(target, old)
+        # Retried: on Windows antivirus or indexing briefly locks freshly unpacked files.
+        common.rename_with_retry(target, old)
     try:
-        os.replace(new, target)
+        common.rename_with_retry(new, target)
     except BaseException:
         if old is not None:
-            os.replace(old, target)
+            common.rename_with_retry(old, target)
         raise
     if old is not None:
-        shutil.rmtree(old, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            common.remove_tree(old)  # else removed on the next run
 
 
 def _clean_leftovers(node_dir: Path) -> None:
-    """Remove temp files and folders of an earlier, cancelled download."""
+    """Remove temp folders of an earlier, cancelled download or a replaced old copy."""
     parent = node_dir.parent
-    for pattern in (f".{node_dir.name}-download-*", f".{node_dir.name}-unpack-*"):
-        for path in parent.glob(pattern):
-            if path.is_dir():
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                with contextlib.suppress(OSError):
-                    path.unlink()
-    for path in parent.glob(f".{node_dir.name}-old-*"):
-        shutil.rmtree(path, ignore_errors=True)
+    if not parent.is_dir():
+        return
+    for kind in ("download", "unpack", "old"):
+        for path in parent.glob(f".{node_dir.name}-{kind}-*"):
+            with contextlib.suppress(OSError):
+                common.remove_tree(path)
 
 
 def download_private_node(
@@ -467,14 +602,16 @@ def download_private_node(
     node_dir: Path | None = None,
     dist_url: str = NODE_DIST_URL,
     opener: Opener | None = None,
-    major: int = NODE_MAJOR,
+    major: int | None = None,
     plat: tuple[str, str] | None = None,
 ) -> str:
     """Download, verify and unpack the newest Node ``major`` into ``node_dir``.
 
-    Returns the installed version (``24.11.1``). Doesn't ask; see :func:`ensure_node`.
+    ``major`` defaults to :func:`node_major`. Returns the installed version (``24.11.1``).
+    Doesn't ask; see :func:`ensure_node`.
     """
     node_dir = common.PRIVATE_NODE_DIR if node_dir is None else node_dir
+    major = node_major() if major is None else major
     opener = _default_opener if opener is None else opener
     plat_name, ext = archive_platform() if plat is None else plat
     dist_url = dist_url.rstrip("/")
@@ -492,16 +629,14 @@ def download_private_node(
     expected = expected_sha256(shasums.decode("utf-8", errors="replace"), filename)
 
     parent = node_dir.parent
+    _clean_leftovers(node_dir)
+    download_dir: Path | None = None
+    staging: Path | None = None
     try:
         parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise common.InstallError(f"Could not create {parent}: {exc}") from exc
-    _clean_leftovers(node_dir)
-
-    download_dir = Path(tempfile.mkdtemp(prefix=f".{node_dir.name}-download-", dir=parent))
-    staging = Path(tempfile.mkdtemp(prefix=f".{node_dir.name}-unpack-", dir=parent))
-    archive = download_dir / filename
-    try:
+        download_dir = Path(tempfile.mkdtemp(prefix=f".{node_dir.name}-download-", dir=parent))
+        staging = Path(tempfile.mkdtemp(prefix=f".{node_dir.name}-unpack-", dir=parent))
+        archive = download_dir / filename
         url = f"{dist_url}/v{version}/{filename}"
         for attempt in range(_DOWNLOAD_ATTEMPTS):
             try:
@@ -523,9 +658,16 @@ def download_private_node(
                 f"Could not move the new Node.js into {node_dir}: {exc}",
                 hint="Close programs that might use it and run the installer again.",
             ) from exc
+    except OSError as exc:
+        # Creating folders, saving the archive or writing VERSION: a full disk, missing
+        # permissions or (on Windows) a path over 260 characters.
+        raise common.InstallError(
+            f"Could not set up Node.js in {parent}: {exc}", hint=_disk_hint()
+        ) from exc
     finally:
-        shutil.rmtree(download_dir, ignore_errors=True)
-        shutil.rmtree(staging, ignore_errors=True)
+        for folder in (download_dir, staging):
+            if folder is not None:
+                shutil.rmtree(folder, ignore_errors=True)
     return version
 
 
@@ -541,6 +683,7 @@ def ensure_node(
     Raises InstallError if the user declines or no official build exists for this system.
     """
     node_dir = common.PRIVATE_NODE_DIR if node_dir is None else node_dir
+    _clean_leftovers(node_dir)  # cheap; a cancelled download can leave up to ~180 MB
     if not force_private:
         system = find_system_node()
         if system is not None:

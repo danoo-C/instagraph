@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import ipaddress
 import os
 import shutil
@@ -23,11 +24,11 @@ import threading
 import time
 import traceback
 import webbrowser
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
-from typing import Literal
+from typing import Any, Literal
 
 from installer import common, ui
 
@@ -37,6 +38,11 @@ RUN_FILE: Path = common.RUN_FILE
 STARTUP_TIMEOUT = 20.0
 #: How long to wait for the server to stop by itself after Ctrl+C before terminating it.
 STOP_TIMEOUT = 10.0
+#: After the port answers, how long our own server must stay alive to count as the one that
+#: answered. Another Instagraph may hold the port; then ours fails to bind and exits.
+CONFIRM_DELAY = 1.0
+#: Probe timeout while waiting for startup, so the loop notices a dead server quickly.
+STARTUP_PROBE_TIMEOUT = 1.0
 
 #: Exit codes that mean "stopped by Ctrl+C / normally": 0, SIGINT on POSIX (-2, 130) and
 #: STATUS_CONTROL_C_EXIT on Windows (0xC000013A, signed and unsigned).
@@ -45,12 +51,21 @@ _STOPPED_EXIT_CODES = frozenset({0, -int(signal.SIGINT), 130, 0xC000013A, -10737
 RunningState = Literal["ours", "instagraph", "other", "none"]
 
 
-def _install_cmd() -> str:
-    return "py install.py" if common.IS_WINDOWS else "python3 install.py"
+def _install_hint(lead: str) -> str:
+    """``lead`` plus how to run install.py.
+
+    On Windows ``py`` may be missing (Microsoft Store Python) or pick an old Python, so the
+    required version is named and ``py`` is only an example.
+    """
+    if common.IS_WINDOWS:
+        version = ".".join(map(str, common.MIN_PYTHON))
+        return f"{lead}, with Python {version} or newer (for example: py install.py)"
+    return f"{lead}: python3 install.py"
 
 
 def _run_cmd() -> str:
-    return "py run.py" if common.IS_WINDOWS else "python3 run.py"
+    # On Windows ``py`` may not exist; the venv's Python is there once Instagraph is installed.
+    return r"backend\.venv\Scripts\python.exe run.py" if common.IS_WINDOWS else "python3 run.py"
 
 
 # --- Options -------------------------------------------------------------------------
@@ -118,24 +133,6 @@ def parse_args(argv: Sequence[str] | None, environ: Mapping[str, str] | None = N
 
 
 # --- Server environment --------------------------------------------------------------
-
-
-def read_env_file(path: Path) -> dict[str, str]:
-    """``KEY=value`` pairs from a dotenv file (``backend/.env``). Missing file: empty."""
-    values: dict[str, str] = {}
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return values
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        line = line.removeprefix("export ")
-        key, sep, value = line.partition("=")
-        if sep:
-            values[key.strip()] = value.strip().strip("'\"")
-    return values
 
 
 def _lookup(name: str, *sources: Mapping[str, str]) -> str | None:
@@ -307,6 +304,22 @@ def _open_and_report(url: str) -> bool:
 # --- Already running -----------------------------------------------------------------
 
 
+def _report_running(state: RunningState, port: int, opts: Options) -> int:
+    """Instagraph already answers on ``port``: say so, open the browser, exit code 0."""
+    url = f"http://127.0.0.1:{port}"
+    if state == "ours":
+        ui.step(f"Instagraph is already running on port {port}: {url}")
+    else:
+        ui.step(f"An Instagraph server is already running on port {port}: {url}")
+        ui.info(
+            "If that is another Instagraph copy, start this one on another port, "
+            f"for example: {_run_cmd()} --port {port + 1}"
+        )
+    if opts.open_browser and not _open_and_report(url):
+        ui.pause_before_exit()  # keep the URL readable
+    return 0
+
+
 def find_running(port: int, run_file: Path | None = None) -> tuple[RunningState, int]:
     """Is Instagraph already running? Returns the state and the port it's on.
 
@@ -350,10 +363,17 @@ def _wait_until_ready(proc: subprocess.Popen[bytes], port: int, timeout: float) 
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             return False
-        if common.probe_instagraph(port) == "instagraph":
+        if common.probe_instagraph(port, timeout=STARTUP_PROBE_TIMEOUT) == "instagraph":
             return True
         time.sleep(0.25)
     return False
+
+
+def _still_running_after(proc: subprocess.Popen[bytes], seconds: float) -> bool:
+    """Wait up to ``seconds``; True if ``proc`` is still running then."""
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=seconds)
+    return proc.poll() is None
 
 
 def _wait_for_exit(proc: subprocess.Popen[bytes]) -> int:
@@ -386,13 +406,18 @@ def _terminate(proc: subprocess.Popen[bytes]) -> int:
     return proc.wait()
 
 
-def _install_stop_handlers(proc: subprocess.Popen[bytes]) -> None:
+_SignalHandler = Callable[[int, FrameType | None], Any] | int | None
+
+
+def _install_stop_handlers(proc: subprocess.Popen[bytes]) -> dict[int, _SignalHandler]:
     """POSIX: treat SIGTERM / SIGHUP (terminal closed) like Ctrl+C, so the run file is removed.
 
-    The server is asked to stop too, since it may not have received the signal.
+    The server is asked to stop too, since it may not have received the signal. Returns the
+    previous handlers, for :func:`_restore_handlers`.
     """
+    previous: dict[int, _SignalHandler] = {}
     if common.IS_WINDOWS or threading.current_thread() is not threading.main_thread():
-        return
+        return previous
 
     def handler(signum: int, frame: FrameType | None) -> None:
         if proc.poll() is None:
@@ -404,7 +429,52 @@ def _install_stop_handlers(proc: subprocess.Popen[bytes]) -> None:
         sig = getattr(signal, name, None)
         if sig is not None:
             with contextlib.suppress(OSError, ValueError):
-                signal.signal(sig, handler)
+                previous[sig] = signal.signal(sig, handler)
+    return previous
+
+
+def _restore_handlers(previous: Mapping[int, _SignalHandler]) -> None:
+    for sig, old in previous.items():
+        with contextlib.suppress(OSError, ValueError, TypeError):
+            signal.signal(sig, old)
+
+
+# --- Windows console -----------------------------------------------------------------
+
+_STD_INPUT_HANDLE = -10
+_ENABLE_QUICK_EDIT_MODE = 0x0040
+_ENABLE_EXTENDED_FLAGS = 0x0080
+
+
+@contextlib.contextmanager
+def quick_edit_disabled(kernel32: Any = None) -> Iterator[None]:
+    """Windows: turn off QuickEdit in this console while the server runs, then restore it.
+
+    With QuickEdit on (the Windows 10 default), clicking in the window starts a selection
+    that pauses all output, which freezes the server. A no-op elsewhere or without a
+    console; never raises. ``kernel32`` is for tests.
+    """
+    handle: Any = None
+    old_mode: int | None = None
+    try:
+        if kernel32 is None and common.IS_WINDOWS:
+            windll = getattr(ctypes, "windll", None)
+            kernel32 = windll.kernel32 if windll is not None else None
+        if kernel32 is not None:
+            handle = kernel32.GetStdHandle(_STD_INPUT_HANDLE)
+            mode = ctypes.c_uint()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                new_mode = (mode.value & ~_ENABLE_QUICK_EDIT_MODE) | _ENABLE_EXTENDED_FLAGS
+                if new_mode != mode.value and kernel32.SetConsoleMode(handle, new_mode):
+                    old_mode = mode.value
+    except Exception:  # a console tweak must never stop the launcher
+        old_mode = None
+    try:
+        yield
+    finally:
+        if old_mode is not None:
+            with contextlib.suppress(Exception):
+                kernel32.SetConsoleMode(handle, old_mode)
 
 
 def _announce(port: int, lan: bool, lan_ips: Sequence[str]) -> None:
@@ -428,6 +498,13 @@ def _announce(port: int, lan: bool, lan_ips: Sequence[str]) -> None:
 
 
 def _serve(python: Path, opts: Options, env: Mapping[str, str], lan_ips: Sequence[str]) -> int:
+    with quick_edit_disabled():
+        return _serve_child(python, opts, env, lan_ips)
+
+
+def _serve_child(
+    python: Path, opts: Options, env: Mapping[str, str], lan_ips: Sequence[str]
+) -> int:
     host = env["INSTAGRAPH_HOST"]
     ui.step(f"Starting Instagraph on port {opts.port}…")
     try:
@@ -437,16 +514,23 @@ def _serve(python: Path, opts: Options, env: Mapping[str, str], lan_ips: Sequenc
     except OSError as exc:
         raise common.InstallError(
             f"Could not start the server: {exc}",
-            hint=f"Try running the installer again: {_install_cmd()}",
+            hint=_install_hint("Try running the installer again"),
         ) from exc
 
     interrupted = False
+    wrote_run_file = False
+    handlers = _install_stop_handlers(proc)
     try:
-        _install_stop_handlers(proc)
         try:
             ready = _wait_until_ready(proc, opts.port, STARTUP_TIMEOUT)
+            # The answer may have come from another Instagraph on this port (say the icon
+            # was double-clicked twice); then ours can't bind and exits soon after.
+            if ready:
+                _still_running_after(proc, CONFIRM_DELAY)
             code = proc.poll()
             if code is not None:
+                if common.probe_instagraph(opts.port) == "instagraph":
+                    return _report_running("instagraph", opts.port, opts)
                 ui.error(
                     f"The server stopped before it was ready (exit code {code}). "
                     "See the messages above."
@@ -460,6 +544,7 @@ def _serve(python: Path, opts: Options, env: Mapping[str, str], lan_ips: Sequenc
                 )
             try:
                 common.write_run_file(proc.pid, opts.port, path=RUN_FILE)
+                wrote_run_file = True
             except OSError as exc:
                 ui.warn(f"Could not write {RUN_FILE.name}: {exc}")
             _announce(opts.port, opts.lan, lan_ips)
@@ -473,7 +558,9 @@ def _serve(python: Path, opts: Options, env: Mapping[str, str], lan_ips: Sequenc
     finally:
         if proc.poll() is None:  # an unexpected error: don't leave the server behind
             _terminate(proc)
-        common.remove_run_file(RUN_FILE, pid=proc.pid)
+        if wrote_run_file:
+            common.remove_run_file(RUN_FILE, pid=proc.pid)
+        _restore_handlers(handlers)
 
     if interrupted or code in _STOPPED_EXIT_CODES:
         ui.step("Instagraph stopped.")
@@ -484,33 +571,28 @@ def _serve(python: Path, opts: Options, env: Mapping[str, str], lan_ips: Sequenc
 
 
 def _launch(opts: Options) -> int:
+    if common.IS_WINDOWS and common.is_unc_path(common.REPO_ROOT):
+        # cmd.exe can't use a network folder as its working folder; uvicorn itself copes.
+        ui.warn(
+            "Instagraph is in a network folder; if something doesn't work, "
+            "copy it to this computer."
+        )
     python = common.venv_python()
     if not python.exists():
         raise common.InstallError(
             "Instagraph isn't installed yet (backend/.venv was not found).",
-            hint=f"Run the installer first: {_install_cmd()}",
+            hint=_install_hint("Run the installer first"),
         )
-    env_file = read_env_file(common.BACKEND_DIR / ".env")
+    env_file = common.read_env_file(common.BACKEND_DIR / ".env")
     if not _dist_index(os.environ, env_file).is_file():
         raise common.InstallError(
             "The Instagraph web page hasn't been built yet (frontend/dist/index.html is missing).",
-            hint=f"Run the installer, which builds it: {_install_cmd()}",
+            hint=_install_hint("Run the installer again, which builds it"),
         )
 
     state, port = find_running(opts.port)
     if state in ("ours", "instagraph"):
-        url = f"http://127.0.0.1:{port}"
-        if state == "ours":
-            ui.step(f"Instagraph is already running on port {port}: {url}")
-        else:
-            ui.step(f"An Instagraph server is already running on port {port}: {url}")
-            ui.info(
-                "If that is another Instagraph copy, start this one on another port, "
-                f"for example: {_run_cmd()} --port {port + 1}"
-            )
-        if opts.open_browser and not _open_and_report(url):
-            ui.pause_before_exit()  # keep the URL readable
-        return 0
+        return _report_running(state, port, opts)
     if state == "other":
         raise common.InstallError(
             f"Port {port} is already used by another program.",

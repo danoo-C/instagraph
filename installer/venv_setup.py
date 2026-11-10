@@ -6,12 +6,10 @@ Owner: core agent. See docs/plans/cross-platform-installer.md, "install.py flow"
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
 import os
 import re
-import shutil
-import stat
+import secrets
 import subprocess
 import sys
 import venv as venv_module
@@ -79,9 +77,21 @@ def cfg_version(cfg: dict[str, str]) -> tuple[int, int] | None:
 
 
 def _python_runs(python: Path) -> bool:
+    """True if the venv's Python starts and its pip works.
+
+    Ctrl+C while the venv is being created can leave a Python without pip; such a venv
+    counts as broken, so the user is offered to recreate it.
+    """
     try:
-        result = common.run([python, "-c", "import sys"], capture=True, check=False)
-    except InstallError:
+        result = subprocess.run(
+            [str(python), "-m", "pip", "--version"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=common.python_child_env(),
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
 
@@ -100,7 +110,7 @@ def detect_venv_state(
       from ``home =`` in pyvenv.cfg, or this OS's interpreter is missing while the other
       OS's is there.
     - older-python: pyvenv.cfg says it was made with an older major.minor than ``current``.
-    - broken: this OS's interpreter is missing or doesn't start.
+    - broken: this OS's interpreter is missing or doesn't start, or its pip doesn't work.
     - ok: none of the above.
     """
     current = current or (sys.version_info.major, sys.version_info.minor)
@@ -142,8 +152,12 @@ def running_inside(venv: Path) -> bool:
 def refuse_inside(venv: Path, why: str) -> InstallError:
     return InstallError(
         f"This installer is running with the Python from {venv}, which {why}.",
-        "Run it with your normal Python instead: "
-        + ("py install.py" if common.IS_WINDOWS else "python3 install.py"),
+        (
+            "Run install.py again with your normal Python 3.12 or newer "
+            "(for example: py install.py)."
+            if common.IS_WINDOWS
+            else "Run it with your normal Python instead: python3 install.py"
+        ),
     )
 
 
@@ -161,27 +175,37 @@ def _venv_package_hint() -> str:
     return "Reinstall Python from https://www.python.org/downloads/ and run install.py again."
 
 
-def remove_tree(path: Path) -> None:
-    """Delete a folder, also when files in it are read-only (common on Windows)."""
-
-    def onexc(func: Callable[..., object], name: str, exc: BaseException) -> None:
-        if isinstance(exc, FileNotFoundError):
-            return
-        if not isinstance(exc, PermissionError):
-            raise exc
-        # Clear the read-only bit on the file (Windows) or its folder (POSIX), then retry.
-        target = Path(name)
-        for p in (target, target.parent):
-            with contextlib.suppress(OSError):
-                mode = os.lstat(p).st_mode
-                if not stat.S_ISLNK(mode):
-                    os.chmod(p, mode | stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-        func(name)
-
-    if not path.exists() and not path.is_symlink():
-        return
+def check_can_create() -> None:
+    """Raise InstallError if this Python can't make a venv with pip (checked before
+    anything is deleted). Debian and Ubuntu ship ``ensurepip`` disabled until the
+    ``python3-venv`` package is installed."""
+    if importlib.util.find_spec("ensurepip") is None:
+        raise InstallError("This Python can't create virtual environments.", _venv_package_hint())
     try:
-        shutil.rmtree(path, onexc=onexc)
+        result = subprocess.run(
+            [sys.executable, "-m", "ensurepip", "--version"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=common.python_child_env(),
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InstallError(
+            "This Python can't create virtual environments.", _venv_package_hint()
+        ) from exc
+    if result.returncode != 0:
+        ui.detail(result.stdout.strip())
+        raise InstallError("This Python can't create virtual environments.", _venv_package_hint())
+
+
+def remove_tree(path: Path) -> None:
+    """:func:`common.remove_tree`, with an InstallError the user can act on."""
+    try:
+        common.remove_tree(path)
     except OSError as exc:
         raise InstallError(
             f"Could not delete {path}: {exc}",
@@ -189,65 +213,120 @@ def remove_tree(path: Path) -> None:
         ) from exc
 
 
+def _discard(path: Path) -> None:
+    """Delete a half-made folder while another error is on its way; never raises."""
+    try:
+        common.remove_tree(path)
+    except OSError as exc:
+        ui.detail(f"Could not delete {path}: {exc}")
+
+
 def create_venv(venv: Path, *, builder: Callable[[Path], None] | None = None) -> None:
     """Create ``venv`` with pip, using the running Python.
 
-    If it fails (typically Debian/Ubuntu without the venv package, so ``ensurepip`` is
-    missing), the half-made folder is removed and an InstallError explains what to install.
+    If it fails or is interrupted (Ctrl+C while ``ensurepip`` runs), the half-made folder
+    is removed, so it can't later pass for a working venv. A failure (typically
+    Debian/Ubuntu without the venv package) raises an InstallError that says what to
+    install. The venv is built in place: venvs can't be moved after creation (their
+    scripts contain the absolute path).
     """
 
     def default_builder(path: Path) -> None:
         venv_module.EnvBuilder(with_pip=True).create(path)
 
     build = builder or default_builder
-    if builder is None and importlib.util.find_spec("ensurepip") is None:
-        raise InstallError("This Python can't create virtual environments.", _venv_package_hint())
+    if builder is None:
+        check_can_create()
     try:
         build(venv)
-    except (Exception, SystemExit) as exc:
+    except BaseException as exc:
+        _discard(venv)
+        if not isinstance(exc, (Exception, SystemExit)):  # KeyboardInterrupt
+            raise
         # Debian's patched venv module may sys.exit() when ensurepip is unavailable.
-        with contextlib.suppress(InstallError):
-            remove_tree(venv)
         ui.detail(f"venv creation failed: {exc!r}")
         raise InstallError(
             f"Could not create the Python environment in {venv}.", _venv_package_hint()
         ) from exc
     if not common.venv_python(venv).exists():
-        with contextlib.suppress(InstallError):
-            remove_tree(venv)
+        _discard(venv)
         raise InstallError(
             f"Could not create the Python environment in {venv}.", _venv_package_hint()
         )
 
 
-def recreate_venv(
-    venv: Path, *, keep_node: bool, create: Callable[[Path], None] | None = None
-) -> None:
-    """Delete and create ``venv`` again.
+@dataclass
+class VenvSwap:
+    """A recreated venv. The previous one waits in ``old`` until the packages are installed.
 
-    With ``keep_node``, the private Node.js in it (same OS, still usable) is moved aside and
-    put back, so it isn't downloaded again.
+    :meth:`commit` deletes the old one (after moving its private Node.js over, if
+    ``keep_node``); :meth:`rollback` deletes the new one and puts the old one back.
     """
-    node_dir = venv / common.PRIVATE_NODE_DIR.name
-    parked: Path | None = None
-    if keep_node and node_dir.is_dir():
-        parked = venv.parent / ".instagraph-node-keep"
-        with contextlib.suppress(InstallError):
-            remove_tree(parked)
+
+    venv: Path
+    old: Path
+    keep_node: bool = False
+
+    def commit(self) -> None:
+        node_name = common.PRIVATE_NODE_DIR.name
+        old_node, new_node = self.old / node_name, self.venv / node_name
+        if self.keep_node and old_node.is_dir() and not new_node.exists():
+            try:
+                common.rename_with_retry(old_node, new_node)
+            except OSError as exc:  # it is downloaded again when needed
+                ui.detail(f"Could not keep the private Node.js: {exc}")
         try:
-            os.replace(node_dir, parked)
-        except OSError:
-            parked = None
+            common.remove_tree(self.old)
+        except OSError as exc:
+            ui.warn(
+                f"Could not delete the previous Python environment {self.old} ({exc}). "
+                "You can delete that folder yourself."
+            )
+
+    def rollback(self) -> None:
+        """Undo the recreation. Never raises: it runs while another error is on its way."""
+        try:
+            common.remove_tree(self.venv)
+            common.rename_with_retry(self.old, self.venv)
+        except OSError as exc:
+            ui.warn(
+                f"Could not put the previous Python environment back ({exc}). It is in "
+                f"{self.old}; run install.py again."
+            )
+        else:
+            ui.info(f"The previous {_display(self.venv)} was put back.")
+
+
+def recreate_venv(
+    venv: Path,
+    *,
+    keep_node: bool,
+    create: Callable[[Path], None] | None = None,
+    preflight: Callable[[], None] | None = None,
+) -> VenvSwap:
+    """Create ``venv`` again, keeping the old one aside until the caller commits.
+
+    Checks first that a new venv can be made, then renames the old one to
+    ``<name>-old-<random>`` and creates the new one. If that fails or is interrupted,
+    the old one is put back. With ``keep_node``, the private Node.js in the old venv
+    (same OS, still usable) moves into the new one on commit, so it isn't downloaded again.
+    """
+    (preflight or check_can_create)()
+    old = venv.with_name(f"{venv.name}-old-{secrets.token_hex(4)}")
     try:
-        remove_tree(venv)
+        common.rename_with_retry(venv, old)
+    except OSError as exc:
+        raise InstallError(
+            f"Could not move {venv} aside to recreate it: {exc}",
+            "If Instagraph or a terminal using this folder is open, close it. " + CLOSE_HINT,
+        ) from exc
+    swap = VenvSwap(venv, old, keep_node=keep_node)
+    try:
         (create or create_venv)(venv)
-    finally:
-        if parked is not None and parked.is_dir():
-            if venv.is_dir() and not node_dir.exists():
-                os.replace(parked, node_dir)
-            else:
-                with contextlib.suppress(InstallError):
-                    remove_tree(parked)
+    except BaseException:
+        swap.rollback()
+        raise
+    return swap
 
 
 # --- Step 2: make sure the venv is usable --------------------------------------------
@@ -255,13 +334,35 @@ def recreate_venv(
 VenvOutcome = Literal["created", "recreated", "reused"]
 
 
+@dataclass
+class VenvSetup:
+    """The result of :func:`ensure_venv`.
+
+    After a recreate, the caller installs the packages and then calls :meth:`commit`, or
+    :meth:`rollback` if anything failed, which puts the previous venv back.
+    """
+
+    outcome: VenvOutcome
+    swap: VenvSwap | None = None
+
+    def commit(self) -> None:
+        if self.swap is not None:
+            self.swap.commit()
+            self.swap = None
+
+    def rollback(self) -> None:
+        if self.swap is not None:
+            self.swap.rollback()
+            self.swap = None
+
+
 def ensure_venv(
     venv: Path,
     *,
     info: VenvInfo | None = None,
     create: Callable[[Path], None] | None = None,
-    recreate: Callable[..., None] | None = None,
-) -> VenvOutcome:
+    recreate: Callable[..., VenvSwap | None] | None = None,
+) -> VenvSetup:
     """Create the venv if missing, or recreate it (after asking) if it can't be reused."""
     info = info or detect_venv_state(venv)
     create = create or create_venv
@@ -269,11 +370,11 @@ def ensure_venv(
     shown = _display(venv)
     if info.state == "ok":
         ui.info(f"Using the existing {shown}.")
-        return "reused"
+        return VenvSetup("reused")
     if info.state == "missing":
         ui.info(f"Creating {shown} ...")
         create(venv)
-        return "created"
+        return VenvSetup("created")
 
     here = common.os_label()
     if info.state == "other-os":
@@ -295,8 +396,7 @@ def ensure_venv(
         ):
             raise InstallError(f"Stopped. {shown} was not changed.", ONE_CLONE_PER_OS)
         ui.info(f"Recreating {shown} ...")
-        recreate(venv, keep_node=False)
-        return "recreated"
+        return VenvSetup("recreated", recreate(venv, keep_node=False))
 
     if info.state == "older-python":
         old = ".".join(map(str, info.version)) if info.version else "an older Python"
@@ -304,10 +404,10 @@ def ensure_venv(
         question = f"{shown} was made with Python {old}. Recreate it with Python {now}?"
         if not ui.ask_yes_no(question, default=True):
             ui.info(f"Keeping {shown} as it is.")
-            return "reused"
+            return VenvSetup("reused")
     else:  # broken
         if not ui.ask_yes_no(
-            f"{shown} is damaged (its Python doesn't start). Recreate it?", default=True
+            f"{shown} is damaged (its Python or pip doesn't work). Recreate it?", default=True
         ):
             raise InstallError(
                 f"Stopped. {shown} can't be used as it is.",
@@ -316,8 +416,7 @@ def ensure_venv(
     if running_inside(venv):
         raise refuse_inside(venv, "needs to be recreated")
     ui.info(f"Recreating {shown} ...")
-    recreate(venv, keep_node=True)
-    return "recreated"
+    return VenvSetup("recreated", recreate(venv, keep_node=True))
 
 
 def _display(path: Path) -> str:
@@ -393,6 +492,8 @@ def run_streaming(cmd: Sequence[str | Path], *, cwd: Path, show_all: bool) -> tu
         proc = subprocess.Popen(
             [str(c) for c in cmd],
             cwd=cwd,
+            env=common.python_child_env(),
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

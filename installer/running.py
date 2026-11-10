@@ -36,17 +36,16 @@ class RunningServer:
 def find_running(run_file: Path, ports: Iterable[int]) -> RunningServer | None:
     """The running Instagraph server, if any.
 
-    A run file counts only if its process is alive and its port answers as Instagraph;
-    otherwise it is stale and deleted. Then ``ports`` are probed, which catches servers
-    started by ./launch or make dev (they write no run file).
+    A run file counts if its process is alive and its port answers as Instagraph, or is
+    at least in use (a busy server may answer the probe too slowly). It is deleted as
+    stale only when its process is dead or its port is free. Then ``ports`` are probed,
+    which catches servers started by ./launch or make dev (they write no run file).
     """
     data = common.read_run_file(run_file)
-    if (
-        data is not None
-        and common.pid_alive(data["pid"])
-        and common.probe_instagraph(data["port"]) == "instagraph"
-    ):
-        return RunningServer(port=data["port"], this_copy=True)
+    if data is not None and common.pid_alive(data["pid"]):
+        port = data["port"]
+        if common.probe_instagraph(port) == "instagraph" or common.port_in_use(port):
+            return RunningServer(port=port, this_copy=True)
     if run_file.exists():
         ui.detail(f"Removing a stale run file: {run_file}")
         common.remove_run_file(run_file)

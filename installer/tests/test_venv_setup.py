@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import stat
 import subprocess
 import sys
@@ -203,6 +202,14 @@ def test_other_os_wins_over_older_python(tmp_path: Path) -> None:
 @pytest.fixture(scope="module")
 def real_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     path = tmp_path_factory.mktemp("realvenv") / ".venv"
+    venv.EnvBuilder(with_pip=True).create(path)
+    return path
+
+
+@pytest.fixture(scope="module")
+def bare_venv(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A venv without pip, as left by Ctrl+C while ensurepip runs."""
+    path = tmp_path_factory.mktemp("barevenv") / ".venv"
     venv.EnvBuilder(with_pip=False).create(path)
     return path
 
@@ -214,15 +221,19 @@ def test_real_venv_is_ok(real_venv: Path) -> None:
     assert info.python == common.venv_python(real_venv)
 
 
-def test_real_venv_has_no_anthropic(real_venv: Path) -> None:
-    assert venv_setup.anthropic_installed(common.venv_python(real_venv)) is False
+def test_venv_without_pip_is_broken(bare_venv: Path) -> None:
+    assert venv_setup.detect_venv_state(bare_venv).state == "broken"
 
 
-def test_real_venv_with_edited_cfg(real_venv: Path, tmp_path: Path) -> None:
+def test_real_venv_has_no_anthropic(bare_venv: Path) -> None:
+    assert venv_setup.anthropic_installed(common.venv_python(bare_venv)) is False
+
+
+def test_real_venv_with_edited_cfg(bare_venv: Path, tmp_path: Path) -> None:
     import shutil
 
     copy = tmp_path / ".venv"
-    shutil.copytree(real_venv, copy, symlinks=True)
+    shutil.copytree(bare_venv, copy, symlinks=True)
     cfg = copy / "pyvenv.cfg"
     text = cfg.read_text(encoding="utf-8")
     other_home = "/usr/bin" if common.IS_WINDOWS else "C:\\Python312"
@@ -271,7 +282,7 @@ def info(state: venv_setup.VenvState, tmp_path: Path, **kw: Any) -> venv_setup.V
 def ensure(tmp_path: Path, vinfo: venv_setup.VenvInfo, calls: Calls) -> str:
     return venv_setup.ensure_venv(
         tmp_path / ".venv", info=vinfo, create=calls.create, recreate=calls.recreate
-    )
+    ).outcome
 
 
 def test_ensure_missing_creates(tmp_path: Path) -> None:
@@ -395,48 +406,138 @@ def make_fake(path: Path) -> None:
     common.venv_python(path).write_text("", encoding="utf-8")
 
 
-def test_recreate_keeps_private_node(tmp_path: Path) -> None:
+def no_preflight() -> None:
+    pass
+
+
+def recreate(v: Path, *, keep_node: bool, create: Any = make_fake) -> venv_setup.VenvSwap:
+    return venv_setup.recreate_venv(v, keep_node=keep_node, create=create, preflight=no_preflight)
+
+
+def siblings(v: Path) -> list[str]:
+    return sorted(p.name for p in v.parent.iterdir())
+
+
+def test_create_interrupted_removes_half_made_venv(tmp_path: Path) -> None:
+    target = tmp_path / ".venv"
+
+    def interrupted(path: Path) -> None:
+        make_fake(path)  # Python is there, pip isn't yet
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        venv_setup.create_venv(target, builder=interrupted)
+    assert not target.exists()
+
+
+def test_recreate_keeps_old_venv_until_commit(tmp_path: Path) -> None:
     v = fake_venv(tmp_path)
     (v / "node").mkdir()
     (v / "node" / "VERSION").write_text("v24.1.0")
     (v / "junk").write_text("old")
-    venv_setup.recreate_venv(v, keep_node=True, create=make_fake)
+    swap = recreate(v, keep_node=True)
+    assert swap.old.parent == v.parent and swap.old.name.startswith(".venv-old-")
+    assert (swap.old / "junk").read_text() == "old"  # still there until commit
+    assert not (v / "junk").exists()
+    swap.commit()
     assert (v / "node" / "VERSION").read_text() == "v24.1.0"
     assert not (v / "junk").exists()
-    assert not (tmp_path / ".instagraph-node-keep").exists()
+    assert siblings(v) == [".venv"]
 
 
 def test_recreate_for_other_os_drops_node(tmp_path: Path) -> None:
     v = fake_venv(tmp_path)
     (v / "node").mkdir()
-    venv_setup.recreate_venv(v, keep_node=False, create=make_fake)
+    recreate(v, keep_node=False).commit()
     assert not (v / "node").exists()
     assert common.venv_python(v).exists()
+    assert siblings(v) == [".venv"]
 
 
-def test_recreate_failure_keeps_node_aside_cleanly(tmp_path: Path) -> None:
+def test_rollback_puts_old_venv_back(tmp_path: Path) -> None:
     v = fake_venv(tmp_path)
     (v / "node").mkdir()
+    (v / "junk").write_text("old")
+    swap = recreate(v, keep_node=True)
+    swap.rollback()
+    assert (v / "junk").read_text() == "old"
+    assert (v / "node").is_dir()
+    assert siblings(v) == [".venv"]
+
+
+@pytest.mark.parametrize("error", [InstallError("nope"), KeyboardInterrupt()])
+def test_recreate_failure_restores_old_venv(tmp_path: Path, error: BaseException) -> None:
+    v = fake_venv(tmp_path)
+    (v / "node").mkdir()
+    (v / "junk").write_text("old")
 
     def fail(path: Path) -> None:
-        raise InstallError("nope")
+        make_fake(path)
+        raise error
 
-    with pytest.raises(InstallError):
-        venv_setup.recreate_venv(v, keep_node=True, create=fail)
-    assert not (tmp_path / ".instagraph-node-keep").exists()
+    with pytest.raises(type(error)):
+        recreate(v, keep_node=True, create=fail)
+    assert (v / "junk").read_text() == "old"
+    assert (v / "node").is_dir()
+    assert siblings(v) == [".venv"]
 
 
-@pytest.mark.skipif(common.IS_WINDOWS or os.geteuid() == 0, reason="POSIX permissions")
-def test_remove_tree_read_only(tmp_path: Path) -> None:
+def test_recreate_preflight_failure_changes_nothing(tmp_path: Path) -> None:
+    v = fake_venv(tmp_path)
+
+    def cannot() -> None:
+        raise InstallError("This Python can't create virtual environments.")
+
+    def never(path: Path) -> None:
+        raise AssertionError("should not create")
+
+    with pytest.raises(InstallError, match="can't create"):
+        venv_setup.recreate_venv(v, keep_node=True, create=never, preflight=cannot)
+    assert siblings(v) == [".venv"]
+    assert (v / "pyvenv.cfg").exists()
+
+
+def test_check_can_create_passes_here() -> None:
+    venv_setup.check_can_create()  # the Python running the tests can make venvs
+
+
+def test_ensure_venv_returns_swap_to_commit(tmp_path: Path) -> None:
+    ui.configure(assume_yes=True)
+    v = fake_venv(tmp_path, version="3.12.0.final.0")
+    setup = venv_setup.ensure_venv(
+        v,
+        info=info("older-python", tmp_path, version=(3, 12)),
+        recreate=lambda path, *, keep_node: recreate(path, keep_node=keep_node),
+    )
+    assert setup.outcome == "recreated" and setup.swap is not None
+    setup.rollback()
+    assert (v / "pyvenv.cfg").exists()
+    assert siblings(v) == [".venv"]
+    setup.commit()  # nothing left to do: harmless
+
+
+def test_remove_tree_read_only_file(tmp_path: Path) -> None:
+    # On Windows this sets the read-only flag, which blocks deleting the file.
     root = tmp_path / "tree"
     sub = root / "sub"
     sub.mkdir(parents=True)
     f = sub / "file.txt"
     f.write_text("x")
     f.chmod(stat.S_IREAD)
-    sub.chmod(stat.S_IREAD | stat.S_IEXEC)
     venv_setup.remove_tree(root)
     assert not root.exists()
+
+
+def test_remove_tree_failure_is_install_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(path: Path) -> None:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(common, "remove_tree", fail)
+    with pytest.raises(InstallError) as exc:
+        venv_setup.remove_tree(tmp_path)
+    assert "Close the Instagraph window" in (exc.value.hint or "")
 
 
 def test_remove_tree_missing_is_fine(tmp_path: Path) -> None:
@@ -520,6 +621,13 @@ def test_pip_failure_shows_tail(tmp_path: Path) -> None:
     with pytest.raises(InstallError) as exc:
         pip(tmp_path, runner)
     assert "No matching distribution" in (exc.value.hint or "")
+
+
+def test_run_streaming_no_input_and_utf8(tmp_path: Path) -> None:
+    code = "import sys; print(repr(sys.stdin.read())); print('Dušan ✓')"
+    rc, out = venv_setup.run_streaming([sys.executable, "-c", code], cwd=tmp_path, show_all=False)
+    assert rc == 0
+    assert out.splitlines() == ["''", "Dušan ✓"]
 
 
 def test_run_streaming_shows_progress(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

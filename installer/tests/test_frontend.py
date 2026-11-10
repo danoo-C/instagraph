@@ -63,7 +63,7 @@ def fe(tmp_path: Path) -> Path:
 
 
 def _state(fe: Path, **kwargs: Any) -> frontend.FrontendState:
-    args: dict[str, Any] = {"frontend_dir": fe, "plat": "linux", "arch": "x64", **kwargs}
+    args: dict[str, Any] = {"frontend_dir": fe, "plat": "linux", **kwargs}
     return frontend.frontend_state(**args)
 
 
@@ -161,21 +161,34 @@ def test_binding_from_macos(fe: Path) -> None:
     assert _state(fe).reason == "node_modules was installed on another system (macOS)"
 
 
-def test_binding_for_other_cpu(fe: Path) -> None:
-    assert (
-        _state(fe, arch="arm64").reason == "node_modules was installed for another processor type"
-    )
+@pytest.mark.parametrize("cpu", ["x64", "arm64"])
+def test_binding_for_any_cpu_of_this_os(
+    fe: Path, monkeypatch: pytest.MonkeyPatch, cpu: str
+) -> None:
+    """npm picks the binding for the Node's CPU (x64 Node under Rosetta or on Windows on
+    ARM), not the real CPU: any binding for this OS is fine, or every run would npm ci."""
+    monkeypatch.setattr(common, "cpu_arch", lambda: cpu)
+    (fe / "node_modules" / "@rolldown" / "binding-linux-x64-gnu").rmdir()
+    (fe / "node_modules" / "@rolldown" / "binding-linux-arm64-gnu").mkdir()
+    assert _state(fe) == frontend.FrontendState(False, False, "up to date")
 
 
 def test_windows_sees_linux_node_modules(fe: Path) -> None:
-    state = _state(fe, plat="win32", arch="x64")
+    state = _state(fe, plat="win32")
     assert state.needs_install
     assert state.reason == "node_modules was installed on another system (Linux)"
 
 
-def test_windows_binding_ok(fe: Path) -> None:
-    (fe / "node_modules" / "@rolldown" / "binding-win32-arm64-msvc").mkdir()
-    assert not _state(fe, plat="win32", arch="arm64").needs_install
+@pytest.mark.parametrize("binding", ["binding-win32-arm64-msvc", "binding-win32-x64-msvc"])
+def test_windows_binding_ok(fe: Path, binding: str) -> None:
+    (fe / "node_modules" / "@rolldown" / "binding-linux-x64-gnu").rmdir()
+    (fe / "node_modules" / "@rolldown" / binding).mkdir()
+    assert not _state(fe, plat="win32").needs_install
+
+
+def test_mixed_bindings_include_this_os(fe: Path) -> None:
+    (fe / "node_modules" / "@rolldown" / "binding-darwin-arm64").mkdir()
+    assert not _state(fe).needs_install
 
 
 def test_musl_binding_counts(fe: Path) -> None:
@@ -210,7 +223,6 @@ def test_no_binding_at_all(fe: Path) -> None:
 def test_defaults_use_common(fe: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(common, "IS_WINDOWS", True)
     monkeypatch.setattr(common, "IS_MACOS", False)
-    monkeypatch.setattr(common, "cpu_arch", lambda: "x64")
     state = frontend.frontend_state(frontend_dir=fe)
     assert state.reason == "node_modules was installed on another system (Linux)"
 
@@ -330,6 +342,10 @@ def test_default_dir_is_repo_frontend() -> None:
 def test_only_key_npm_lines_are_shown() -> None:
     assert frontend._show_npm_line("added 412 packages in 21s")
     assert frontend._show_npm_line("✓ built in 1.31s")
+    # Vite colours this line on Windows and in CI; run_tee strips the codes before show().
+    coloured = "\x1b[32m✓ built in \x1b[1m1.31s\x1b[22m\x1b[39m"
+    assert not frontend._show_npm_line(coloured)
+    assert frontend._show_npm_line(common.strip_ansi(coloured))
     assert frontend._show_npm_line("npm error code ERESOLVE")
     assert not frontend._show_npm_line("dist/assets/index-Bk1CcyXt.css   32.66 kB")
     assert not frontend._show_npm_line("> tsc -b && vite build")

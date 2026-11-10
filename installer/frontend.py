@@ -62,7 +62,7 @@ def frontend_inputs(frontend_dir: Path) -> Iterator[Path]:
     yield from sorted(frontend_dir.glob("tsconfig*.json"))
 
 
-def _install_reason(frontend_dir: Path, plat: str, arch: str) -> str | None:
+def _install_reason(frontend_dir: Path, plat: str) -> str | None:
     """Why ``npm ci`` is needed, or None if node_modules looks fine for this computer."""
     node_modules = frontend_dir / "node_modules"
     if not node_modules.is_dir():
@@ -74,13 +74,14 @@ def _install_reason(frontend_dir: Path, plat: str, arch: str) -> str | None:
         return "package-lock.json changed since the last npm install"
     # Vite 8 builds with rolldown, which ships one native binding per OS and CPU. If a
     # future Vite drops rolldown, there is nothing OS-specific to check here.
+    # Only the OS is checked: npm installs the binding for the CPU of the Node it ran with,
+    # which can differ from the real CPU (x64 Node under Rosetta or on Windows on ARM).
     if not (node_modules / "rolldown").is_dir():
         return None
     rolldown = node_modules / "@rolldown"
     if not rolldown.is_dir():
         return "node_modules is incomplete (no rolldown binding)"
-    pattern = f"binding-{plat}-{arch}*" if arch in ("x64", "arm64") else f"binding-{plat}-*"
-    if any(p.is_dir() for p in rolldown.glob(pattern)):
+    if any(p.is_dir() for p in rolldown.glob(f"binding-{plat}-*")):
         return None
     others = sorted(
         {
@@ -89,8 +90,6 @@ def _install_reason(frontend_dir: Path, plat: str, arch: str) -> str | None:
             if p.is_dir()
         }
     )
-    if others == [_OS_NAMES.get(plat, plat)]:
-        return "node_modules was installed for another processor type"
     if others:
         return f"node_modules was installed on another system ({', '.join(others)})"
     return "node_modules has no rolldown binding for this system"
@@ -101,14 +100,12 @@ def frontend_state(
     rebuild: bool = False,
     frontend_dir: Path | None = None,
     plat: str | None = None,
-    arch: str | None = None,
 ) -> FrontendState:
     """Inspect frontend/ without running anything."""
     frontend_dir = common.FRONTEND_DIR if frontend_dir is None else frontend_dir
     plat = _node_platform() if plat is None else plat
-    arch = common.cpu_arch() if arch is None else arch
 
-    install_reason = _install_reason(frontend_dir, plat, arch)
+    install_reason = _install_reason(frontend_dir, plat)
     if install_reason is not None:
         return FrontendState(needs_install=True, needs_build=True, reason=install_reason)
     if rebuild:
@@ -130,7 +127,10 @@ def frontend_state(
 
 
 def _show_npm_line(line: str) -> bool:
-    """The npm / Vite output lines worth showing without --verbose."""
+    """The npm / Vite output lines worth showing without --verbose.
+
+    ``common.run_tee`` strips colour codes first, so Vite's coloured "✓ built in" matches.
+    """
     text = line.strip()
     return text.startswith(("added ", "✓ built in")) or text.lower().startswith(
         ("npm error", "error")

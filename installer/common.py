@@ -394,8 +394,11 @@ def remove_tree(path: Path) -> None:
     def onexc(func: Callable[..., Any], name: str, exc: BaseException) -> None:
         if not isinstance(exc, PermissionError):
             raise exc
-        with contextlib.suppress(OSError):
-            os.chmod(name, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+        # Windows refuses to delete read-only files; POSIX refuses to delete entries of a
+        # read-only folder. Make both the entry and its folder writable, then retry.
+        for target in (name, os.path.dirname(name)):
+            with contextlib.suppress(OSError):
+                os.chmod(target, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
         if os.path.isdir(name) and not os.path.islink(name):
             os.rmdir(name)
         else:

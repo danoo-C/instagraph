@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import shutil
@@ -135,24 +136,25 @@ def test_lan_allowed_hosts() -> None:
     assert launcher.lan_allowed_hosts([], "", None) == ""
 
 
-def test_read_env_file(tmp_path: Path) -> None:
+def test_env_file_values_respected(tmp_path: Path) -> None:
+    """Values from backend/.env (read by common.read_env_file) count as user-set,
+    whatever their case, like pydantic-settings reads them."""
     path = tmp_path / ".env"
     path.write_text(
         textwrap.dedent(
             """\
             # comment
-            INSTAGRAPH_DATA_DIR = "/x y"
+            instagraph_data_dir = "/x y"
             export INSTAGRAPH_ALLOWED_HOSTS='a,b'
             garbage
             """
         ),
         encoding="utf-8",
     )
-    assert launcher.read_env_file(path) == {
-        "INSTAGRAPH_DATA_DIR": "/x y",
-        "INSTAGRAPH_ALLOWED_HOSTS": "a,b",
-    }
-    assert launcher.read_env_file(tmp_path / "missing") == {}
+    env = launcher.build_server_env({}, lan=True, env_file=common.read_env_file(path))
+    assert "INSTAGRAPH_DATA_DIR" not in env
+    assert env["INSTAGRAPH_FRONTEND_DIST"] == str(common.DIST_DIR)
+    assert env["INSTAGRAPH_ALLOWED_HOSTS"] == "a,b"
 
 
 def test_dist_index_honours_custom_folder(tmp_path: Path) -> None:
@@ -397,6 +399,50 @@ def test_main_missing_venv(
     assert "install.py" in capsys.readouterr().err
 
 
+def test_install_hint_windows(
+    installed: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(common, "IS_WINDOWS", True)
+    monkeypatch.setattr(common, "venv_python", lambda: installed / "nope")
+    assert launcher.main(["--no-browser", "--port", "9000"]) == 1
+    err = capsys.readouterr().err
+    assert "Run the installer first, with Python 3.12 or newer (for example: py install.py)" in (
+        err
+    )
+    assert "network folder" not in err
+
+
+def test_install_hint_elsewhere(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(common, "IS_WINDOWS", False)
+    assert launcher._install_hint("Run the installer first") == (
+        "Run the installer first: python3 install.py"
+    )
+
+
+@pytest.mark.parametrize(
+    ("windows", "root", "warned"),
+    [
+        (True, "//server/share/instagraph", True),
+        (True, "C:/Users/me/instagraph", False),
+        (False, "//server/share/instagraph", False),
+    ],
+)
+def test_unc_repo_warns_once(
+    installed: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    windows: bool,
+    root: str,
+    warned: bool,
+) -> None:
+    monkeypatch.setattr(common, "IS_WINDOWS", windows)
+    monkeypatch.setattr(common, "REPO_ROOT", Path(root))
+    monkeypatch.setattr(common, "venv_python", lambda: installed / "nope")
+    assert launcher.main(["--no-browser", "--port", "9000"]) == 1  # not installed: stops
+    err = capsys.readouterr().err
+    assert err.count("network folder") == (1 if warned else 0)
+
+
 def test_main_missing_dist(
     installed: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -438,6 +484,180 @@ def test_main_server_dies_during_startup(
     assert launcher.main(["--no-browser", "--port", "9000"]) == 3
     assert "stopped before it was ready (exit code 3)" in capsys.readouterr().err
     assert not (installed / "run.json").exists()
+
+
+class FakeChild:
+    """Stands in for the uvicorn process. It exits with ``code`` on its ``exit_on_wait``-th
+    ``wait()`` (0: it has already exited when started)."""
+
+    pid = 54321
+
+    def __init__(self, exit_on_wait: int, code: int) -> None:
+        self.exit_on_wait = exit_on_wait
+        self.code = code
+        self.waits = 0
+        self.returncode: int | None = code if exit_on_wait == 0 else None
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.returncode is None:
+            self.waits += 1
+            if self.waits < self.exit_on_wait:
+                raise subprocess.TimeoutExpired("uvicorn", timeout or 0)
+            self.returncode = self.code
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.returncode = -15
+
+    kill = terminate
+
+
+def _start_fake_child(monkeypatch: pytest.MonkeyPatch, child: FakeChild, port: int) -> None:
+    """Popen returns ``child``; from then on Instagraph answers on ``port``."""
+    started: list[bool] = []
+
+    def fake_popen(cmd: list[str], **kwargs: Any) -> FakeChild:
+        started.append(True)
+        return child
+
+    def probe(p: int, *args: Any, **kwargs: Any) -> common.ProbeResult:
+        return "instagraph" if started and p == port else "none"
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(common, "probe_instagraph", probe)
+
+
+@pytest.mark.parametrize(
+    "exit_on_wait",
+    [0, 1],  # 0: exits before the port answers; 1: exits right after (in the confirm wait)
+)
+def test_main_other_instagraph_took_the_port(
+    installed: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exit_on_wait: int,
+) -> None:
+    """Icon double-clicked twice: our server can't bind, the other copy answers. Treat it
+    as "already running" and leave the other copy's run file alone."""
+    run_file = installed / "run.json"
+    child = FakeChild(exit_on_wait=exit_on_wait, code=1)
+    _start_fake_child(monkeypatch, child, 9000)
+    opened: list[str] = []
+    monkeypatch.setattr(launcher, "open_browser", _recorder(opened))
+    start_child = subprocess.Popen
+
+    def popen_and_other_copy_writes(cmd: list[str], **kwargs: Any) -> Any:
+        _write_run_file(run_file, 999, 9000)  # the first copy writes its run file meanwhile
+        return start_child(cmd, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", popen_and_other_copy_writes)
+    monkeypatch.setattr(
+        common, "write_run_file", lambda *a, **k: pytest.fail("must not write the run file")
+    )
+    assert launcher.main(["--port", "9000"]) == 0
+    out = capsys.readouterr()
+    assert "already running on port 9000" in out.out
+    assert "error" not in out.err
+    assert opened == ["http://127.0.0.1:9000"]
+    assert common.read_run_file(run_file) == {"pid": 999, "port": 9000, "started": "x"}
+
+
+def test_main_own_server_writes_and_removes_run_file(
+    installed: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_file = installed / "run.json"
+    child = FakeChild(exit_on_wait=2, code=0)  # survives the confirm wait, then stops
+    _start_fake_child(monkeypatch, child, 9000)
+    seen: list[dict[str, Any] | None] = []
+
+    def open_browser(url: str) -> bool:
+        seen.append(common.read_run_file(run_file))
+        return True
+
+    monkeypatch.setattr(launcher, "open_browser", open_browser)
+    before = signal.getsignal(signal.SIGTERM)
+    assert launcher.main(["--port", "9000"]) == 0
+    assert seen and seen[0] is not None and seen[0]["pid"] == FakeChild.pid
+    assert not run_file.exists()
+    assert "Instagraph stopped." in capsys.readouterr().out
+    assert signal.getsignal(signal.SIGTERM) == before  # stop handlers are put back
+
+
+# --- Windows console -----------------------------------------------------------------
+
+
+class FakeKernel32:
+    def __init__(self, mode: int | None) -> None:
+        self.mode = mode  # None: no console
+        self.set_calls: list[int] = []
+
+    def GetStdHandle(self, which: int) -> int:  # Win32 name
+        assert which == -10
+        return 7
+
+    def GetConsoleMode(self, handle: int, ref: Any) -> int:
+        if self.mode is None:
+            return 0
+        ref._obj.value = self.mode
+        return 1
+
+    def SetConsoleMode(self, handle: int, mode: int) -> int:
+        assert handle == 7
+        self.set_calls.append(mode)
+        return 1
+
+
+def test_quick_edit_disabled_and_restored() -> None:
+    kernel32 = FakeKernel32(0x01F7)  # Windows 10 default: QuickEdit on
+    with launcher.quick_edit_disabled(kernel32):
+        assert kernel32.set_calls == [0x01B7]  # QuickEdit off, extended flags kept
+    assert kernel32.set_calls == [0x01B7, 0x01F7]
+
+
+def test_quick_edit_already_off_or_no_console() -> None:
+    off = FakeKernel32(0x00B7)
+    with launcher.quick_edit_disabled(off):
+        pass
+    assert off.set_calls == []
+    no_console = FakeKernel32(None)
+    with launcher.quick_edit_disabled(no_console):
+        pass
+    assert no_console.set_calls == []
+
+
+def test_quick_edit_never_raises() -> None:
+    class Broken:
+        def GetStdHandle(self, which: int) -> int:
+            raise OSError("no console")
+
+    with launcher.quick_edit_disabled(Broken()):
+        pass
+
+
+class FakeWindll:
+    def __init__(self, kernel32: FakeKernel32) -> None:
+        self.kernel32 = kernel32
+
+
+def test_quick_edit_skipped_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    kernel32 = FakeKernel32(0x01F7)
+    monkeypatch.setattr(common, "IS_WINDOWS", False)
+    monkeypatch.setattr(ctypes, "windll", FakeWindll(kernel32), raising=False)
+    with launcher.quick_edit_disabled():
+        pass
+    assert kernel32.set_calls == []
+
+
+def test_quick_edit_uses_windll_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    kernel32 = FakeKernel32(0x01F7)
+    monkeypatch.setattr(common, "IS_WINDOWS", True)
+    monkeypatch.setattr(ctypes, "windll", FakeWindll(kernel32), raising=False)
+    with launcher.quick_edit_disabled():
+        assert kernel32.set_calls == [0x01B7]
+    assert kernel32.set_calls == [0x01B7, 0x01F7]
 
 
 # --- Integration: the real server ----------------------------------------------------

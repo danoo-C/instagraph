@@ -4,12 +4,17 @@ See docs/plans/cross-platform-installer.md, "Desktop icon on each OS" and case C
 
 Every shortcut runs ``"<venv python>" "<repo>/run.py"`` in the repo folder, in a console
 or terminal window. Before a shortcut is written, an existing one with the same name is
-read (case C): one for this copy is updated, a broken one or one for a deleted copy is
-replaced, one for another copy asks "keep both / replace", and anything else is kept.
+read (case C): one for this copy is updated, one for a deleted copy (its folder is gone or
+has no run.py) is replaced, one for another copy asks "keep both / replace", and anything
+else, including one that can't be read, is kept.
 "Keep both" writes "Instagraph (<folder>)" next to it.
 
-The keyword-only parameters of :func:`create_shortcuts` exist for tests: they let a test
-use temporary folders and a fake ``runner`` instead of the real desktop and real programs.
+Uninstall (:func:`remove_shortcuts`) never trusts the install record blindly: it removes
+only files that look like our shortcuts and, read again, still start this copy.
+
+The keyword-only parameters of :func:`create_shortcuts` and :func:`remove_shortcuts` exist
+for tests: they let a test use temporary folders and a fake ``runner`` instead of the real
+desktop and real programs.
 """
 
 from __future__ import annotations
@@ -23,9 +28,10 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
 from installer import ui
@@ -47,6 +53,14 @@ class ShortcutResult:
     messages: list[str] = field(default_factory=list)  # summary lines, e.g. "Desktop icon: updated"
 
 
+@dataclass
+class RemoveResult:
+    messages: list[str] = field(default_factory=list)  # one summary line per record entry
+    #: Record entries that may still be this copy's shortcut and are still there: made on
+    #: another system, or deleting failed. Empty means uninstall removed everything it should.
+    failed: list[str] = field(default_factory=list)
+
+
 Platform = Literal["windows", "macos", "linux", "wsl"]
 #: Runs a command and returns it with ``stdout``/``stderr`` captured as text. Must not
 #: raise on a non-zero exit code; may raise ``OSError`` if the program is missing.
@@ -55,6 +69,8 @@ Which = Callable[[str], str | None]
 
 COMMENT = "Statistics and charts for your Instagram messages"
 LINUX_FILE = "instagraph.desktop"
+#: File types uninstall deletes (plus this copy's own icon copy, see :func:`wsl_icon_name`).
+SHORTCUT_SUFFIXES = (".desktop", ".lnk", ".command")
 
 _DESKTOP = "Desktop icon"
 _START_MENU = "Start menu entry"
@@ -104,25 +120,22 @@ def create_shortcuts(
     (Linux and macOS; on Windows and WSL the folders come from PowerShell).
     ``env``: environment variables (``XDG_DATA_HOME``, ``WSL_DISTRO_NAME``).
     ``runner``/``which``: replace ``subprocess.run`` and ``shutil.which``.
+
+    With a fake ``runner`` (a test) but no ``home``/``env``, an empty temporary home and
+    an empty environment are used, so a test can never write into the real home folder.
     """
-    plat = platform or _current_platform()
-    repo = Path(os.path.abspath(repo))
-    if python is None:
-        python = venv_python(repo / "backend" / ".venv", windows=plat == "windows")
-    ctx = _Ctx(
-        plat=plat,
-        repo=repo,
-        python=python,
-        home=home or Path.home(),
-        env=os.environ if env is None else env,
-        runner=runner or _default_runner,
-        which=which or shutil.which,
-    )
-    if plat == "windows":
+    if runner is not None and home is None:
+        home = Path(tempfile.mkdtemp(prefix="instagraph-test-home-"))
+    if runner is not None and env is None:
+        env = {}
+    ctx = _make_ctx(repo, platform, home, env, runner, which)
+    if python is not None:
+        ctx.python = python
+    if ctx.plat == "windows":
         _create_windows(ctx)
-    elif plat == "macos":
+    elif ctx.plat == "macos":
         _create_macos(ctx, desktop_dir)
-    elif plat == "wsl" and _wsl_wants_windows_icon(previous):
+    elif ctx.plat == "wsl" and _wsl_wants_windows_icon(previous):
         if not _create_wsl(ctx):
             _create_linux(ctx, desktop_dir, apps_dir)
     else:
@@ -130,30 +143,55 @@ def create_shortcuts(
     return ctx.result
 
 
-def remove_shortcuts(paths: Iterable[str | Path]) -> list[str]:
-    """Remove shortcuts listed in the install record. Returns summary lines.
+def remove_shortcuts(
+    paths: Iterable[str | Path],
+    *,
+    repo: Path = REPO_ROOT,
+    platform: Platform | None = None,
+    env: Mapping[str, str] | None = None,
+    runner: Runner | None = None,
+    which: Which | None = None,
+) -> list[str]:
+    """Remove this copy's shortcuts listed in the install record. Returns summary lines.
 
-    Only the given files are deleted; missing ones are fine. A folder named
-    "Instagraph" that becomes empty (the WSL icon copy in %LOCALAPPDATA%) goes too.
+    Same as :func:`remove_shortcuts_detailed`, without the list of failures.
     """
-    lines: list[str] = []
+    return remove_shortcuts_detailed(
+        paths, repo=repo, platform=platform, env=env, runner=runner, which=which
+    ).messages
+
+
+def remove_shortcuts_detailed(
+    paths: Iterable[str | Path],
+    *,
+    repo: Path = REPO_ROOT,
+    platform: Platform | None = None,
+    env: Mapping[str, str] | None = None,
+    runner: Runner | None = None,
+    which: Which | None = None,
+) -> RemoveResult:
+    """Remove this copy's shortcuts listed in the install record.
+
+    The record is only a hint (it may be stale, copied from another folder or edited), so
+    each entry is checked first:
+
+    - Only absolute paths ending in ``.desktop``, ``.lnk`` or ``.command``, or this copy's
+      own icon copy (``Instagraph/icon-<hash>.ico``), are considered. Others are skipped.
+    - A path that can't exist on this OS (a Windows path on Linux, ``/mnt/c/...`` outside
+      WSL, ...) is reported as not removed, and listed in ``failed``.
+    - A shortcut is read again (as in case C) and deleted only if it starts this copy, or if
+      it is broken or unreadable and has one of the names this copy uses. One that now
+      starts another copy, or something else, is kept.
+
+    An "Instagraph" folder left empty by deleting the icon copy is deleted too.
+    ``repo``/``platform``/``env``/``runner``/``which``: as for :func:`create_shortcuts`.
+    """
+    ctx = _make_ctx(repo, platform, Path(), env, runner, which)
+    result = RemoveResult()
+    remover = _Remover(ctx, result)
     for raw in paths:
-        path = Path(raw)
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            lines.append(f"Shortcut already gone: {path}")
-            continue
-        except OSError as exc:
-            msg = f"Could not remove {path}: {exc.strerror or exc}"
-            ui.warn(msg)
-            lines.append(msg)
-            continue
-        lines.append(f"Removed {path}")
-        if path.parent.name == APP_NAME:
-            with contextlib.suppress(OSError):
-                path.parent.rmdir()  # only succeeds when empty
-    return lines
+        remover.remove(str(raw))
+    return result
 
 
 # --- Shared machinery ----------------------------------------------------------------
@@ -165,6 +203,27 @@ def _current_platform() -> Platform:
     if IS_MACOS:
         return "macos"
     return "wsl" if is_wsl() else "linux"
+
+
+def _make_ctx(
+    repo: Path,
+    platform: Platform | None,
+    home: Path | None,
+    env: Mapping[str, str] | None,
+    runner: Runner | None,
+    which: Which | None,
+) -> _Ctx:
+    plat = platform or _current_platform()
+    repo = Path(os.path.abspath(repo))
+    return _Ctx(
+        plat=plat,
+        repo=repo,
+        python=venv_python(repo / "backend" / ".venv", windows=plat == "windows"),
+        home=home or Path.home(),
+        env=os.environ if env is None else env,
+        runner=runner or _default_runner,
+        which=which or shutil.which,
+    )
 
 
 def _default_runner(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -228,7 +287,7 @@ class _Ctx:
             return None
 
     def hash8(self) -> str:
-        return hashlib.sha1(str(self.repo).encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+        return _hash8(self.repo)
 
     def fail(self, label: str, exc: Exception) -> None:
         msg = f"{label}: could not be created ({exc})"
@@ -247,9 +306,17 @@ class _Pointer:
 
 @dataclass
 class _Verdict:
-    kind: Literal["missing", "same", "gone", "other", "foreign"]
+    #: missing: no such file; same: starts this copy; gone: starts a copy whose folder is
+    #: gone or has no run.py; other: starts another copy; foreign: not Instagraph;
+    #: unreadable: couldn't be read or parsed (treated like foreign, never overwritten).
+    kind: Literal["missing", "same", "gone", "other", "foreign", "unreadable"]
     note: str = ""  # for "gone": "it pointed to X, which no longer exists"
     where: str = ""  # for "other": the other copy's folder
+
+
+def _hash8(repo: Path) -> str:
+    """Short hash of the repo path: tells this copy's files apart from other copies'."""
+    return hashlib.sha1(str(repo).encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 
 def _same_path(a: Path, b: Path, *, fold_case: bool) -> bool:
@@ -266,10 +333,11 @@ def _judge(path: Path, read: Callable[[Path], _Pointer | None], ctx: _Ctx) -> _V
     try:
         pointer = read(path)
     except (OSError, ShortcutError, ValueError) as exc:
+        # Possibly a passing PowerShell/COM hiccup: never treat the file as broken.
         ui.detail(f"Could not read {path}: {exc}")
-        pointer = None
+        return _Verdict("unreadable")
     if pointer is None:
-        return _Verdict("gone", note="it was broken")
+        return _Verdict("unreadable")
     if not pointer.instagraph:
         return _Verdict("foreign")
     if pointer.local is None:
@@ -328,15 +396,16 @@ def _place(
             )
             return primary
         # Keep both: write "Instagraph (<folder>)" next to the existing one.
-        if alt != primary and _judge(alt, read, ctx).kind in ("other", "foreign"):
+        if alt != primary and _judge(alt, read, ctx).kind in ("other", "foreign", "unreadable"):
             alt_name = f"{APP_NAME} ({_safe_name(ctx.repo.name, ctx)} {ctx.hash8()})"
             alt = names(alt_name)
         write(alt, alt_name)
-        kept = (
-            f"another copy's icon ({verdict.where})"
-            if verdict.kind == "other"
-            else (f"the existing {primary.name}")
-        )
+        if verdict.kind == "other":
+            kept = f"another copy's icon ({verdict.where})"
+        elif verdict.kind == "unreadable":
+            kept = f"the existing {primary.name} (it could not be read)"
+        else:
+            kept = f"the existing {primary.name}"
         ctx.result.messages.append(f'{label}: created as "{alt_name}" ({alt}); kept {kept}')
         return alt
     except (OSError, ShortcutError) as exc:
@@ -519,7 +588,7 @@ def _read_command(path: Path) -> _Pointer | None:
         if len(tokens) >= 2 and tokens[0] == "cd":
             cd_dir = tokens[1]
         for tok in tokens:
-            if tok.rsplit("/", 1)[-1] == "run.py":
+            if re.split(r"[\\/]", tok)[-1] == "run.py":
                 run_py = tok
     if not text.strip():
         return None
@@ -719,6 +788,17 @@ class _WinSide:
             raise ShortcutError(f"wslpath could not convert {win_path}")
         return Path(out.stdout.strip())
 
+    def to_windows(self, local: Path) -> str:
+        """A local path as Windows sees it (``wslpath -w`` under WSL)."""
+        if self.ctx.plat == "windows":
+            return str(local)
+        if self.ctx.plat != "wsl":
+            raise ShortcutError(f"can't read a Windows shortcut on {self.ctx.plat}")
+        out = self.ctx.call(["wslpath", "-w", str(local)])
+        if out is None or out.returncode != 0 or not out.stdout.strip():
+            raise ShortcutError(f"wslpath could not convert {local}")
+        return out.stdout.strip()
+
     def read(self, win_path_of: Callable[[Path], str]) -> Callable[[Path], _Pointer | None]:
         def read(local: Path) -> _Pointer | None:
             data = _ps_json(self.ctx, self.exe, lnk_read_script(win_path_of(local)))
@@ -821,6 +901,11 @@ def _create_windows(ctx: _Ctx) -> None:
             ctx.result.created.append(written)
 
 
+def wsl_icon_name(repo: Path) -> str:
+    """This copy's icon file in ``%LOCALAPPDATA%\\Instagraph`` (one per copy, see WSL)."""
+    return f"icon-{_hash8(repo)}.ico"
+
+
 def wsl_arguments(distro: str | None, repo: Path, python: Path) -> str:
     """Arguments for ``wsl.exe`` that start this copy in its WSL distro."""
     parts = [f"-d {_win_quote(distro)}"] if distro else []
@@ -858,9 +943,10 @@ def _create_wsl(ctx: _Ctx) -> bool:
         folders = _query_folders(ctx, exe)
         if not folders.get("localappdata"):
             raise ShortcutError("Windows reported no LocalAppData folder")
-        icon_dir_win = str(PureWindowsPath(folders["localappdata"]) / APP_NAME)
-        icon_win = str(PureWindowsPath(icon_dir_win) / "icon.ico")
-        icon_local = side.to_local(folders["localappdata"]) / APP_NAME / "icon.ico"
+        # One icon file per copy: uninstalling one copy must not break another's icon.
+        icon_name = wsl_icon_name(ctx.repo)
+        icon_win = str(PureWindowsPath(folders["localappdata"]) / APP_NAME / icon_name)
+        icon_local = side.to_local(folders["localappdata"]) / APP_NAME / icon_name
         icon_local.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ctx.repo / "assets" / "icon.ico", icon_local)
         locals_ = {
@@ -869,7 +955,6 @@ def _create_wsl(ctx: _Ctx) -> bool:
     except (ShortcutError, OSError) as exc:
         ui.warn(f"Could not reach Windows from WSL ({exc}); creating a Linux shortcut instead.")
         return False
-    ctx.result.created.append(icon_local)
 
     distro = ctx.env.get("WSL_DISTRO_NAME") or None
     if distro is None:
@@ -881,11 +966,134 @@ def _create_wsl(ctx: _Ctx) -> bool:
         "workdir": str(PureWindowsPath(folders.get("localappdata") or root)),
         "icon": icon_win,
     }
+    lnks: list[Path] = []
     for label, key in ((_WIN_DESKTOP, "desktop"), (_WIN_START_MENU, "programs")):
         if key not in locals_:
             ctx.result.messages.append(f"{label}: skipped (Windows reported no such folder)")
             continue
         written = side.place(label, folders[key], locals_[key], **common)
         if written is not None:
-            ctx.result.created.append(written)
+            lnks.append(written)
+    if not lnks:
+        # The record must never hold just the icon copy: clean it up, use Linux instead.
+        try:
+            _remove_icon_copy(icon_local)
+        except OSError as exc:
+            ui.detail(f"Could not delete {icon_local}: {exc}")
+        ui.warn("No Windows shortcut could be created; creating a Linux shortcut instead.")
+        return False
+    ctx.result.created.extend([icon_local, *lnks])
     return True
+
+
+def _remove_icon_copy(icon: Path) -> None:
+    """Delete this copy's icon file, and its "Instagraph" folder if that is now empty."""
+    icon.unlink(missing_ok=True)
+    with contextlib.suppress(OSError):
+        icon.parent.rmdir()  # only succeeds when empty
+
+
+# --- Uninstall -----------------------------------------------------------------------
+
+_MNT_DRIVE = re.compile(r"^/mnt/[a-zA-Z](/|$)")
+
+
+def _parts(raw: str) -> list[str]:
+    """Path components, splitting on both separators (record paths may be from any OS)."""
+    return [part for part in re.split(r"[\\/]", raw) if part]
+
+
+def _made_elsewhere(raw: str, plat: Platform) -> bool:
+    """True if ``raw`` can't be a path on this system (written by another OS or by WSL)."""
+    if plat == "windows":
+        return raw.startswith("/") and not raw.startswith("//")
+    if _looks_windows(raw):
+        return True
+    return plat != "wsl" and bool(_MNT_DRIVE.match(raw))
+
+
+class _Remover:
+    """Checks one install-record entry at a time and removes it if it is still ours."""
+
+    def __init__(self, ctx: _Ctx, result: RemoveResult) -> None:
+        self.ctx = ctx
+        self.result = result
+        self._side: _WinSide | None = None
+        h = ctx.hash8()
+        folders = {_safe_name(ctx.repo.name, ctx), ctx.repo.name.replace("/", "_")}
+        stems = {APP_NAME} | {f"{APP_NAME} ({f})" for f in folders}
+        stems |= {f"{APP_NAME} ({f} {h})" for f in folders}
+        names = {f"{stem}{suffix}" for stem in stems for suffix in (".lnk", ".command")}
+        names |= {LINUX_FILE, f"instagraph-{h}.desktop"}
+        #: File names this copy gives its shortcuts (case-insensitive: Windows, macOS).
+        self.own_names = {n.casefold() for n in names}
+        self.icon_name = wsl_icon_name(ctx.repo).casefold()
+
+    def _say(self, line: str, *, failed: str | None = None) -> None:
+        self.result.messages.append(line)
+        if failed is not None:
+            self.result.failed.append(failed)
+
+    def remove(self, raw: str) -> None:
+        parts = _parts(raw)
+        name = parts[-1].casefold() if parts else ""
+        is_icon = name == self.icon_name and len(parts) >= 2 and parts[-2] == APP_NAME
+        if not (is_icon or name.endswith(SHORTCUT_SUFFIXES)):
+            self._say(f"Skipped {raw} (not an Instagraph shortcut)")
+            return
+        if _made_elsewhere(raw, self.ctx.plat):
+            self._say(f"Not removed: {raw} (made on another system; remove it there)", failed=raw)
+            return
+        pure = PureWindowsPath(raw) if self.ctx.plat == "windows" else PurePosixPath(raw)
+        if not pure.is_absolute():
+            self._say(f"Skipped {raw} (not an Instagraph shortcut)")
+            return
+        path = Path(raw)
+        if not (path.exists() or path.is_symlink()):
+            self._say(f"Shortcut already gone: {path}")
+            return
+        if is_icon:
+            self._delete(path, icon=True)
+            return
+        verdict = _judge(path, self._reader(path), self.ctx)
+        if verdict.kind == "same":
+            self._delete(path)
+        elif verdict.kind == "other":
+            self._say(f"Kept {path} (it now belongs to another Instagraph copy: {verdict.where})")
+        elif verdict.kind == "foreign":
+            self._say(f"Skipped {path} (not an Instagraph shortcut)")
+        elif name in self.own_names:  # broken, unreadable or for a deleted copy
+            self._delete(path)
+        else:
+            self._say(f"Kept {path} (it doesn't start this copy and isn't named like its icon)")
+
+    def _delete(self, path: Path, *, icon: bool = False) -> None:
+        try:
+            if icon:
+                _remove_icon_copy(path)
+            else:
+                path.unlink()
+        except FileNotFoundError:
+            self._say(f"Shortcut already gone: {path}")
+        except OSError as exc:
+            msg = f"Could not remove {path}: {exc.strerror or exc}"
+            ui.warn(msg)
+            self._say(msg, failed=str(path))
+        else:
+            self._say(f"Removed {path}")
+
+    def _reader(self, path: Path) -> Callable[[Path], _Pointer | None]:
+        suffix = path.suffix.lower()
+        if suffix == ".desktop":
+            return _read_desktop_entry
+        if suffix == ".command":
+            return _read_command
+        return self._read_lnk
+
+    def _read_lnk(self, path: Path) -> _Pointer | None:
+        if self._side is None:
+            exe = _find_powershell(self.ctx) if self.ctx.plat in ("windows", "wsl") else None
+            if exe is None:
+                raise ShortcutError("PowerShell is not available")
+            self._side = _WinSide(self.ctx, exe)
+        return self._side.read(self._side.to_windows)(path)

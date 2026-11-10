@@ -25,13 +25,18 @@ class World:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.alive: set[int] = set()
         self.ports: dict[int, common.ProbeResult] = {}
+        self.busy: set[int] = set()  # ports in use (beyond those the probe sees)
         self.probed: list[int] = []
         monkeypatch.setattr(common, "pid_alive", lambda pid: pid in self.alive)
         monkeypatch.setattr(common, "probe_instagraph", self.probe)
+        monkeypatch.setattr(common, "port_in_use", self.in_use)
 
     def probe(self, port: int, *a: object, **kw: object) -> common.ProbeResult:
         self.probed.append(port)
         return self.ports.get(port, "none")
+
+    def in_use(self, port: int, *a: object, **kw: object) -> bool:
+        return port in self.busy or self.ports.get(port, "none") != "none"
 
 
 @pytest.fixture
@@ -54,12 +59,13 @@ def test_run_file_alive_and_answering(world: World, tmp_path: Path) -> None:
     assert rf.exists()
 
 
-@pytest.mark.parametrize("case", ["dead", "other-port-owner"])
+@pytest.mark.parametrize("case", ["dead", "dead-port-busy", "alive-port-free"])
 def test_stale_run_file_is_deleted(world: World, tmp_path: Path, case: str) -> None:
     rf = write_run(tmp_path / "run.json")
-    if case == "other-port-owner":
-        world.alive.add(4242)
-        world.ports[9000] = "other"
+    if case == "dead-port-busy":
+        world.ports[9000] = "other"  # the pid is gone; someone else took the port
+    if case == "alive-port-free":
+        world.alive.add(4242)  # the pid was reused by another program
     assert running.find_running(rf, [8000]) is None
     assert not rf.exists()
     assert 8000 in world.probed
@@ -130,3 +136,15 @@ def test_interactive_cancel(world: World, tmp_path: Path, monkeypatch: pytest.Mo
 
 def test_nothing_running(world: World, tmp_path: Path) -> None:
     running.ensure_not_running(tmp_path / "run.json", [8000], wait=lambda _: False)
+
+
+@pytest.mark.parametrize("probe", ["other", "none"])
+def test_slow_server_still_counts(world: World, tmp_path: Path, probe: common.ProbeResult) -> None:
+    # A busy server can miss the probe's timeout ("other"), or refuse it for a moment
+    # while its port is still bound; alive pid + port in use is enough.
+    rf = write_run(tmp_path / "run.json")
+    world.alive.add(4242)
+    world.ports[9000] = probe
+    world.busy.add(9000)
+    assert running.find_running(rf, [8000]) == running.RunningServer(9000, this_copy=True)
+    assert rf.exists()

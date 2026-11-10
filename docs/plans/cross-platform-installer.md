@@ -90,8 +90,9 @@ existing install.
      `PATH` for these commands only, so npm's scripts run with the same Node.
    - Also don't skip the step if `node_modules` was installed on another OS (case B). The
      build would fail with rolldown/lightningcss errors.
-   - Windows needs `npm.cmd`. With system Node, use `shutil.which("npm")`, which finds the
-     right name. With private Node, call `node/npm.cmd` (Windows) or `node/bin/npm` directly.
+   - Windows needs `npm.cmd`. With system Node, use the `npm.cmd` next to `node.exe`, then
+     `shutil.which("npm.cmd")` (Python 3.12.0's `which("npm")` can return the extensionless
+     shell script). With private Node, call `node/npm.cmd` (Windows) or `node/bin/npm` directly.
 5. **Desktop icon:** ask "Create a desktop icon? [Y/n]" (`--shortcut` / `--no-shortcut`).
    See "Desktop icon on each OS". If a shortcut already exists, see case C.
 6. **Finish** by printing how to start it: the icon, or `python run.py`. If the user agrees
@@ -109,9 +110,10 @@ Used when no Node 20.19+ is found on `PATH`.
    just for Instagraph? It won't change anything else on your computer. [Y/n]". With `--yes`
    it downloads without asking. If the user says no, stop and print where to get Node
    (nodejs.org).
-2. **Pick the version:** a pinned major version in `install.py` (`NODE_MAJOR = 24`, the
+2. **Pick the version:** a pinned major version in `installer/node.py` (`NODE_MAJOR = 24`, the
    current LTS). Read `https://nodejs.org/dist/index.json` and take the newest release of that
-   major. Bump `NODE_MAJOR` when the frontend needs a newer Node.
+   major. Bump `NODE_MAJOR` when the frontend needs a newer Node. Node 24 needs macOS 13.5+,
+   so older macOS gets `NODE_MAJOR_OLD_MACOS = 22`.
 3. **Pick the archive** from `platform.system()` and `platform.machine()`:
 
    | OS | CPU | Archive |
@@ -318,8 +320,10 @@ Venv check:
 
 `node_modules` check (step 4):
 
-- Vite 8 pulls in OS-specific packages, so check that a `node_modules/@rolldown/binding-<os>-<cpu>*`
-  folder exists for this OS (for example `binding-win32-x64-msvc` or `binding-linux-x64-gnu`). If it
+- Vite 8 pulls in OS-specific packages, so check that a `node_modules/@rolldown/binding-<os>-*`
+  folder exists for this OS (for example `binding-win32-x64-msvc` or `binding-linux-x64-gnu`).
+  Any CPU is accepted: npm installs bindings for the Node that is used, which can differ from
+  the real CPU (x64 Node under Rosetta or on Windows ARM). If it
   doesn't, run `npm ci`, which deletes `node_modules` and reinstalls it for this OS, and
   print why.
 - This also covers `node_modules` folders made by `make setup`, without a marker file.

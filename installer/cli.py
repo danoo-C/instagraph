@@ -7,13 +7,15 @@ See docs/plans/cross-platform-installer.md, "install.py flow", "Existing install
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
+import signal
 import subprocess
 import sys
 import traceback
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from installer import common, frontend, node, running, shortcuts, ui, venv_setup
@@ -46,7 +48,7 @@ class Paths:
             venv=common.VENV_DIR,
             dist=common.DIST_DIR,
             node_modules=common.NODE_MODULES_DIR,
-            data=common.DATA_DIR,
+            data=common.data_dir(),  # honours INSTAGRAPH_DATA_DIR
             run_file=common.RUN_FILE,
             install_record=common.INSTALL_RECORD,
             env_file=common.BACKEND_DIR / ".env",
@@ -66,7 +68,7 @@ class Paths:
             node_modules=repo / "frontend" / "node_modules",
             data=repo / "data",
             run_file=venv / common.RUN_FILE.name,
-            install_record=venv / common.INSTALL_RECORD.name,
+            install_record=backend / common.INSTALL_RECORD.name,
             env_file=backend / ".env",
             run_py=repo / "run.py",
         )
@@ -213,7 +215,13 @@ def main(argv: list[str] | None = None, *, paths: Paths | None = None) -> int:
 
 # --- Install record ------------------------------------------------------------------
 
-_RECORD_KEYS = ("shortcuts", "ai", "node")
+_RECORD_KEYS = ("shortcuts", "ai", "node", "shortcut")
+
+
+def _same_path(a: object, b: Path) -> bool:
+    if not isinstance(a, str) or not a:
+        return False
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
 @dataclass
@@ -221,12 +229,47 @@ class Record:
     """The install record, kept in memory and saved after every step that changes it."""
 
     path: Path
+    repo: Path
     data: dict[str, Any] = field(default_factory=dict)
+    #: Shortcuts that an install on another OS listed (case B). Not updated from here;
+    #: uninstall hands them to shortcuts.remove_shortcuts_detailed, which leaves them alone.
+    elsewhere: list[str] = field(default_factory=list)
+    #: The OS that made them, e.g. "Windows".
+    elsewhere_os: str = "the other system"
 
     @classmethod
-    def load(cls, path: Path) -> Record:
+    def load(cls, path: Path, repo: Path) -> Record:
+        """Read the record. Its shortcuts only count if it was written for this folder on
+        this OS: a copied folder must not remove (or overwrite the record of) the
+        original's icons, and paths from another OS mean nothing here."""
         raw = common.read_install_record(path)
-        return cls(path, {k: raw[k] for k in _RECORD_KEYS if k in raw})
+        record = cls(path, repo)
+        if not raw:
+            return record
+        listed = raw.get("shortcuts")
+        listed = [str(p) for p in listed] if isinstance(listed, list) else []
+        same_repo = _same_path(raw.get("repo"), repo)
+        made_on = raw.get("os")
+        if made_on != common.os_label():
+            # From WSL a Windows folder has another path, so the repo can't be compared.
+            record.elsewhere = listed
+            record.elsewhere_os = str(made_on) if made_on else "another system"
+            if listed:
+                ui.info(
+                    f"The desktop icons in the install record were made on "
+                    f"{record.elsewhere_os}; they are not changed from here."
+                )
+        elif not same_repo:
+            ui.info(
+                f"The install record belongs to another copy of Instagraph ({raw.get('repo')}); "
+                "it is ignored and its desktop icons are left alone."
+            )
+            return record
+        if same_repo:
+            record.data = {k: raw[k] for k in _RECORD_KEYS if k in raw and k != "shortcuts"}
+            if made_on == common.os_label():
+                record.data["shortcuts"] = listed
+        return record
 
     @property
     def shortcuts(self) -> list[str]:
@@ -241,27 +284,51 @@ class Record:
         if self.path.parent.is_dir():
             common.write_install_record(
                 {
+                    "repo": str(self.repo),
                     "shortcuts": self.shortcuts,
                     "ai": self.data.get("ai"),
                     "node": self.data.get("node"),
+                    "shortcut": self.data.get("shortcut"),
                 },
                 self.path,
             )
 
 
+def _exists(path: str) -> bool:
+    return Path(path).exists() or Path(path).is_symlink()
+
+
 def merge_shortcuts(existing: Sequence[str], created: Sequence[Path | str]) -> list[str]:
     """Paths for the record: earlier shortcuts that still exist, plus the new ones."""
-    merged = [p for p in existing if Path(p).exists() or Path(p).is_symlink()]
+    merged = [p for p in existing if _exists(p)]
     merged += [str(p) for p in created]
     return list(dict.fromkeys(merged))
 
 
-def want_shortcut(flag: bool | None, existing: Sequence[str]) -> bool:
-    """Create/update the desktop icon? Flags decide; a re-run updates existing ones silently."""
+#: Files in the record that aren't icons themselves (the .ico copied for the WSL icon).
+_NOT_ICONS = (".ico",)
+
+
+def want_shortcut(
+    flag: bool | None, existing: Sequence[str], *, declined: bool = False, deleted: bool = False
+) -> bool:
+    """Create/update the desktop icon?
+
+    Flags decide. Otherwise: existing icons are updated without asking; an earlier "no"
+    is remembered; icons deleted by hand are asked about again, but ``--yes`` doesn't
+    bring them back.
+    """
     if flag is not None:
         return flag
     if existing:
         return True
+    if declined:
+        ui.info("No desktop icon (you said no earlier; add --shortcut to create one).")
+        return False
+    if deleted:
+        return ui.ask_yes_no(
+            "The desktop icon was deleted. Create it again?", default=True, yes_value=False
+        )
     return ui.ask_yes_no("Create a desktop icon?", default=True)
 
 
@@ -282,42 +349,59 @@ def _check_python() -> None:
     ui.info(f"Python {major}.{minor}.{micro} on {common.os_label()} ({sys.executable})")
 
 
+def _check_location(paths: Paths) -> None:
+    if common.IS_WINDOWS and common.is_unc_path(paths.repo):
+        raise InstallError(
+            f"Instagraph can't be installed from a network folder ({paths.repo}).",
+            "Copy it to a folder on this computer, or map a drive letter, and run the "
+            "installer again.",
+        )
+
+
 def start_command(paths: Paths) -> str:
     """How to start Instagraph from a terminal in the repo folder."""
-    if common.IS_WINDOWS:
-        return "py run.py"
-    return f"{paths.show(common.venv_python(paths.venv))} run.py"
+    python = paths.show(common.venv_python(paths.venv, windows=common.IS_WINDOWS))
+    if common.IS_WINDOWS:  # not "py run.py": py may pick another Python, or be missing
+        return f"{PureWindowsPath(python)} run.py"
+    return f"{python} run.py"
 
 
 def install(args: argparse.Namespace, paths: Paths) -> int:
     summary: list[str] = []
-    record = Record.load(paths.install_record)
+    record = Record.load(paths.install_record, paths.repo)
 
     ui.step("Checking that Instagraph isn't running")
     running.ensure_not_running(paths.run_file, _ports(paths))
 
     ui.step("Checking Python")
     _check_python()
+    _check_location(paths)
     if common.is_wsl() and str(paths.repo).startswith("/mnt/"):
         ui.info(venv_setup.WSL_MNT_TIP)
 
     ui.step(f"Setting up the Python environment ({paths.show(paths.venv)})")
-    outcome = venv_setup.ensure_venv(paths.venv)
-    summary.append(f"Python environment: {outcome}")
-    record.save()  # a recreated venv lost the record file; put it back
+    setup = venv_setup.ensure_venv(paths.venv)
+    summary.append(f"Python environment: {setup.outcome}")
     python = common.venv_python(paths.venv)
 
     ui.step("Installing Python packages (this can take a few minutes the first time)")
-    fresh = outcome != "reused"
-    already_ai = not fresh and venv_setup.anthropic_installed(python)
-    ai = venv_setup.choose_ai(args.ai, already_ai, answered_no=record.data.get("ai") is False)
-    if already_ai and args.ai is False:
-        ui.info("The AI assistant is already installed; it stays installed.")
-    packages = venv_setup.pip_install(
-        python, backend_dir=paths.backend, repo_root=paths.repo, ai=ai, fresh=fresh
-    )
+    fresh = setup.outcome != "reused"
+    try:
+        installed_ai = not fresh and venv_setup.anthropic_installed(python)
+        # After a recreate the record remembers that the assistant was installed.
+        already_ai = installed_ai or record.data.get("ai") is True
+        ai = venv_setup.choose_ai(args.ai, already_ai, answered_no=record.data.get("ai") is False)
+        if installed_ai and args.ai is False:
+            ui.info("The AI assistant is already installed; it stays installed.")
+        packages = venv_setup.pip_install(
+            python, backend_dir=paths.backend, repo_root=paths.repo, ai=ai, fresh=fresh
+        )
+    except BaseException:
+        setup.rollback()  # a recreated venv: put the previous one back
+        raise
+    setup.commit()
     summary.append(f"Python packages: {packages}")
-    has_ai = ai or already_ai
+    has_ai = ai or installed_ai
     summary.append(
         "AI assistant: " + ("installed (turn it on in Settings)" if has_ai else "not installed")
     )
@@ -358,24 +442,35 @@ def install(args: argparse.Namespace, paths: Paths) -> int:
 
 
 def _shortcut_step(args: argparse.Namespace, record: Record) -> list[str]:
-    existing = record.shortcuts
-    if not want_shortcut(args.shortcut, existing):
-        if existing:
+    listed = record.shortcuts
+    on_disk = [p for p in listed if _exists(p)]
+    icons = [p for p in on_disk if not p.lower().endswith(_NOT_ICONS)]
+    want = want_shortcut(
+        args.shortcut,
+        icons,
+        declined=record.data.get("shortcut") is False,
+        deleted=bool(listed) and not icons,
+    )
+    if not want:
+        if on_disk != listed:
+            record.update(shortcuts=on_disk)  # forget icons deleted by hand
+        if icons:
             ui.info("Leaving the existing desktop icon as it is.")
             return ["Desktop icon: left as it is"]
+        record.update(shortcut=False)  # remembered: not asked again
         return ["Desktop icon: not created"]
     try:
-        result = shortcuts.create_shortcuts(previous=existing)
+        result = shortcuts.create_shortcuts(previous=listed)
     except InstallError as exc:
         # Everything else worked; a missing icon shouldn't fail the whole install.
         ui.warn(f"Could not create the desktop icon: {exc.message}")
         if exc.hint:
             ui.info(exc.hint)
         return ["Desktop icon: not created (see the message above)"]
-    record.update(shortcuts=merge_shortcuts(existing, result.created))
+    record.update(shortcuts=merge_shortcuts(listed, result.created), shortcut=True)
     if result.messages:
         return list(result.messages)
-    return ["Desktop icon: " + ("updated" if existing else "created")]
+    return ["Desktop icon: " + ("updated" if icons else "created")]
 
 
 def start_app(paths: Paths) -> int:
@@ -386,10 +481,13 @@ def start_app(paths: Paths) -> int:
     sys.stdout.flush()
     sys.stderr.flush()
     if common.IS_WINDOWS:  # os.execv misbehaves in Windows consoles
+        # Ctrl+C reaches both processes. Only run.py should react to it; its exit code
+        # is the result (not 130 for a normal stop).
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
         try:
             return subprocess.call(cmd, cwd=paths.repo)
-        except KeyboardInterrupt:
-            return 130
+        finally:
+            signal.signal(signal.SIGINT, previous)
     os.chdir(paths.repo)
     os.execv(cmd[0], cmd)
     return 0  # pragma: no cover  (execv doesn't return)
@@ -400,42 +498,81 @@ def start_app(paths: Paths) -> int:
 
 @dataclass(frozen=True)
 class UninstallPlan:
-    shortcuts: list[str]  # removed through shortcuts.remove_shortcuts
+    shortcuts: list[str]  # handed to shortcuts.remove_shortcuts_detailed (it checks each)
     remove: list[Path]  # deleted without asking
     ask: list[Path]  # deleted only if the user agrees (default no)
-    keep: list[Path]  # never deleted (data/)
+    keep: list[Path]  # never deleted (the data folder)
 
 
 def uninstall_plan(paths: Paths, record: Record) -> UninstallPlan:
     return UninstallPlan(
-        shortcuts=record.shortcuts,
+        # Shortcuts of another OS are reported, not removed, by remove_shortcuts_detailed.
+        shortcuts=list(dict.fromkeys(record.shortcuts + record.elsewhere)),
         remove=[paths.venv] if paths.venv.exists() else [],
         ask=[p for p in (paths.dist, paths.node_modules) if p.exists()],
         keep=[paths.data],
     )
 
 
+def _check_venv_os(paths: Paths) -> None:
+    """Case B: deleting a venv made on the other OS breaks that install. Ask first."""
+    info = venv_setup.detect_venv_state(paths.venv)
+    if info.state != "other-os":
+        return
+    other = info.created_on or "another system"
+    problem = (
+        f"{paths.show(paths.venv)} was created on {other}. Deleting it breaks the {other} "
+        "install of this folder."
+    )
+    if not ui.interactive():
+        raise InstallError(
+            f"{problem} Nothing was removed.",
+            f"Uninstall from {other} instead. To uninstall from here anyway, run "
+            "install.py --uninstall without --yes and answer yes.",
+        )
+    ui.warn(problem)
+    if not ui.ask_yes_no("Uninstall anyway?", default=False):
+        raise running.Cancelled
+
+
+def _delete(path: Path, paths: Paths) -> bool:
+    """Delete ``path``; on failure warn and return False."""
+    _guard_not_data(path, paths)
+    try:
+        common.remove_tree(path)
+    except OSError as exc:
+        ui.warn(f"Could not delete {paths.show(path)}: {exc}")
+        return False
+    ui.info(f"Deleted {paths.show(path)}")
+    return True
+
+
 def uninstall(args: argparse.Namespace, paths: Paths) -> int:
     ui.step("Checking that Instagraph isn't running")
     running.ensure_not_running(paths.run_file, _ports(paths))
-    if paths.venv.exists() and venv_setup.running_inside(paths.venv):
-        raise venv_setup.refuse_inside(paths.venv, "would be deleted")
+    if paths.venv.exists():
+        if venv_setup.running_inside(paths.venv):
+            raise venv_setup.refuse_inside(paths.venv, "would be deleted")
+        _check_venv_os(paths)
 
-    plan = uninstall_plan(paths, Record.load(paths.install_record))
+    record = Record.load(paths.install_record, paths.repo)
+    plan = uninstall_plan(paths, record)
     assert paths.data not in plan.remove and paths.data not in plan.ask
+    ok = True
 
     ui.step("Removing desktop icons")
+    failed: list[str] = []
     if plan.shortcuts:
-        for line in shortcuts.remove_shortcuts(plan.shortcuts):
+        result = shortcuts.remove_shortcuts_detailed(plan.shortcuts, repo=paths.repo)
+        for line in result.messages:
             ui.info(line)
+        failed = list(result.failed)
     else:
         ui.info("No desktop icons to remove.")
 
     ui.step(f"Removing the Python environment ({paths.show(paths.venv)})")
     for path in plan.remove:
-        _guard_not_data(path, paths)
-        venv_setup.remove_tree(path)
-        ui.info(f"Deleted {paths.show(path)}")
+        ok = _delete(path, paths) and ok
     if not plan.remove:
         ui.info("Nothing to remove.")
 
@@ -450,9 +587,7 @@ def uninstall(args: argparse.Namespace, paths: Paths) -> int:
             f"Also delete {paths.show(path)} ({what}; install.py can make it again)?",
             default=False,
         ):
-            _guard_not_data(path, paths)
-            venv_setup.remove_tree(path)
-            ui.info(f"Deleted {paths.show(path)}")
+            ok = _delete(path, paths) and ok
         else:
             ui.info(f"Kept {paths.show(path)}")
     if not plan.ask:
@@ -464,6 +599,18 @@ def uninstall(args: argparse.Namespace, paths: Paths) -> int:
         "To delete it, use Settings > Clear all data in Instagraph (before uninstalling), "
         "or delete that folder yourself."
     )
+
+    if failed or not ok:
+        if failed != plan.shortcuts:  # keep only what is still there to remove
+            Record(paths.install_record, paths.repo, {"shortcuts": failed}).save()
+        ui.warn(
+            "Not everything could be removed (see above). The install record was kept. "
+            "Remove desktop icons made on another system from there; close any program "
+            "using the other files, then run install.py --uninstall again."
+        )
+        return 1
+    with contextlib.suppress(OSError):
+        paths.install_record.unlink(missing_ok=True)
     ui.step("Uninstalled. To install again, run install.py.")
     return 0
 

@@ -7,10 +7,15 @@ import http.server
 import io
 import json
 import os
+import platform
 import socket
+import ssl
 import stat
 import tarfile
 import threading
+import time
+import urllib.error
+import urllib.request
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,6 +26,20 @@ import pytest
 from installer import common, node, ui
 
 POSIX_ONLY = pytest.mark.skipif(os.name == "nt", reason="fake node is a shell script")
+_PROXY_VARS = ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
+
+
+def _entries(folder: Path, expected: list[str], timeout: float = 5.0) -> list[str]:
+    """Sorted names in ``folder``, waiting briefly for them to become ``expected``.
+
+    On Windows, antivirus can keep a just-deleted folder visible for a moment.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        names = sorted(p.name for p in folder.iterdir())
+        if names == expected or time.monotonic() > deadline:
+            return names
+        time.sleep(0.1)
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +86,33 @@ def test_node_version_ok(version: tuple[int, int, int], ok: bool) -> None:
 )
 def test_parse_version(text: str, expected: tuple[int, int, int] | None) -> None:
     assert node.parse_version(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("macos", "mac_version", "major"),
+    [
+        (False, "", node.NODE_MAJOR),
+        (True, "12.7.4", node.NODE_MAJOR_OLD_MACOS),
+        (True, "13.4.1", node.NODE_MAJOR_OLD_MACOS),
+        (True, "13", node.NODE_MAJOR_OLD_MACOS),
+        (True, "13.5", node.NODE_MAJOR),
+        (True, "14.2.1", node.NODE_MAJOR),
+        (True, "26.0", node.NODE_MAJOR),
+        (True, "", node.NODE_MAJOR),  # unknown: assume a current macOS
+        (True, "garbage", node.NODE_MAJOR),
+    ],
+)
+def test_node_major(
+    monkeypatch: pytest.MonkeyPatch, macos: bool, mac_version: str, major: int
+) -> None:
+    monkeypatch.setattr(common, "IS_MACOS", macos)
+    monkeypatch.setattr(platform, "mac_ver", lambda: (mac_version, ("", "", ""), ""))
+    assert node.node_major() == major
+    assert node.node_major(macos=macos, mac_version=mac_version) == major
+
+
+def test_old_macos_major_suits_vite() -> None:
+    assert node.node_version_ok((node.NODE_MAJOR_OLD_MACOS, 12, 0))
 
 
 # --- Archive choice ------------------------------------------------------------------
@@ -181,6 +227,107 @@ def test_check_url() -> None:
         node._check_url("http://nodejs.org/dist/index.json")
 
 
+def test_default_opener_uses_https_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = ssl.create_default_context()
+    node._https_context.cache_clear()
+    monkeypatch.setattr(common, "https_context", lambda: ctx)
+    seen: list[Any] = []
+
+    class FakeOpener:
+        def open(self, url: str, timeout: float) -> io.BytesIO:
+            return io.BytesIO(b"ok")
+
+    def build_opener(*handlers: Any) -> FakeOpener:
+        seen.extend(handlers)
+        return FakeOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
+    try:
+        assert node._default_opener("https://nodejs.org/dist/index.json").read() == b"ok"
+    finally:
+        node._https_context.cache_clear()
+    https = [h for h in seen if isinstance(h, urllib.request.HTTPSHandler)]
+    assert https and https[0]._context is ctx  # type: ignore[attr-defined]
+    assert any(isinstance(h, node._HttpsOnlyRedirects) for h in seen)
+
+
+def test_certificate_error_hint() -> None:
+    def opener(url: str) -> Any:
+        raise urllib.error.URLError(
+            ssl.SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate")
+        )
+
+    with pytest.raises(common.InstallError) as info:
+        node._fetch_bytes("https://nodejs.org/dist/index.json", opener)
+    assert "Could not download" in info.value.message
+    assert info.value.hint == common.CERTIFICATE_HINT
+
+
+def test_other_network_error_hint() -> None:
+    def opener(url: str) -> Any:
+        raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+
+    with pytest.raises(common.InstallError) as info:
+        node._fetch_bytes("https://nodejs.org/dist/index.json", opener)
+    assert info.value.hint is not None and "internet connection" in info.value.hint
+
+
+class _RedirectServer:
+    """Answers /go with a redirect to ``target`` (a format string taking the port)."""
+
+    def __init__(self, target: str) -> None:
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path == "/go":
+                    port = outer.httpd.server_address[1]
+                    self.send_response(302)
+                    self.send_header("Location", target.format(port=port))
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = b"landed"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+@pytest.mark.parametrize(
+    ("target", "ok"),
+    [
+        ("http://127.0.0.2:{port}/evil", False),
+        ("http://example.com/evil", False),
+        ("/landed", True),  # relative, same (local) server
+        ("http://127.0.0.1:{port}/landed", True),
+    ],
+)
+def test_redirects_must_stay_https(monkeypatch: pytest.MonkeyPatch, target: str, ok: bool) -> None:
+    for var in _PROXY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    server = _RedirectServer(target)
+    try:
+        if ok:
+            assert node._fetch_bytes(f"{server.url}/go", node._default_opener) == b"landed"
+        else:
+            with pytest.raises(common.InstallError, match="insecure"):
+                node._fetch_bytes(f"{server.url}/go", node._default_opener)
+    finally:
+        server.close()
+
+
 # --- Safe unpack ---------------------------------------------------------------------
 
 
@@ -256,6 +403,91 @@ def test_unpack_tar_rejects_link_outside(tmp_path: Path) -> None:
         node.safe_unpack(archive, dest)
 
 
+def _make_tar_with_links(
+    path: Path, links: list[tuple[str, str, bytes]], files: tuple[str, ...] = ("top/lib/x.js",)
+) -> None:
+    """``links``: (name, target, type) with type tarfile.SYMTYPE or LNKTYPE."""
+    with tarfile.open(path, "w:gz") as tf:
+        for name in files:
+            _add_tar_file(tf, name, b"x", 0o755)
+        for name, target, kind in links:
+            info = tarfile.TarInfo(name)
+            info.type = kind
+            info.linkname = target
+            tf.addfile(info)
+
+
+@pytest.mark.parametrize(
+    ("links", "files"),
+    [
+        # Outside the top folder, though still inside dest: filter="data" allows this.
+        ([("top/bin/npm", "../../other/x", tarfile.SYMTYPE)], ()),
+        ([("top/a", "/etc/passwd", tarfile.SYMTYPE)], ()),
+        ([("top/a", "C:/Windows", tarfile.SYMTYPE)], ()),
+        ([("top/a", "..\\..\\x", tarfile.SYMTYPE)], ()),
+        # Hard link targets are relative to the archive root.
+        ([("top/h", "other/x", tarfile.LNKTYPE)], ()),
+        ([("top/h", "../x", tarfile.LNKTYPE)], ()),
+        # Through another link, where the real location differs from the name.
+        ([("top/b", ".", tarfile.SYMTYPE), ("top/a", "b/../../x", tarfile.SYMTYPE)], ()),
+        ([("top/b", "lib", tarfile.SYMTYPE)], ("top/b/file",)),
+    ],
+)
+def test_unpack_tar_rejects_unsafe_links(
+    tmp_path: Path, links: list[tuple[str, str, bytes]], files: tuple[str, ...]
+) -> None:
+    archive = tmp_path / "bad.tar.gz"
+    _make_tar_with_links(archive, links, ("top/lib/x.js", *files))
+    dest = tmp_path / "out"
+    dest.mkdir()
+    with pytest.raises(common.InstallError, match="Unsafe path"):
+        node.safe_unpack(archive, dest)
+    assert list(dest.iterdir()) == []  # checked before anything is written
+
+
+def test_tar_links_inside_top_are_fine(tmp_path: Path) -> None:
+    archive = tmp_path / "ok.tar.gz"
+    _make_tar_with_links(
+        archive,
+        [
+            ("top/bin/npm", "../lib/x.js", tarfile.SYMTYPE),  # like Node's bin/npm
+            ("top/bin/npx", "npm", tarfile.SYMTYPE),  # a link to a link
+            ("top/lib/y.js", "top/lib/x.js", tarfile.LNKTYPE),
+        ],
+    )
+    with tarfile.open(archive) as tf:
+        node._check_tar_links(tf.getmembers())
+
+
+@POSIX_ONLY
+def test_unpack_tar_keeps_safe_symlinks(tmp_path: Path) -> None:
+    archive = tmp_path / "ok.tar.gz"
+    _make_tar_with_links(archive, [("top/bin/npm", "../lib/x.js", tarfile.SYMTYPE)])
+    dest = tmp_path / "out"
+    dest.mkdir()
+    node.safe_unpack(archive, dest)
+    npm = dest / "top" / "bin" / "npm"
+    assert npm.is_symlink() and npm.read_bytes() == b"x"
+
+
+def test_unpack_os_error_has_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    archive = tmp_path / "ok.tar.gz"
+    _make_tar(archive, {"top/bin/node": (b"x", 0o755)}, mode="w:gz")
+
+    def too_long(*_a: Any, **_k: Any) -> None:
+        raise OSError(36, "File name too long")
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", too_long)
+    monkeypatch.setattr(common, "IS_WINDOWS", True)
+    with pytest.raises(common.InstallError, match="Could not unpack") as info:
+        node.safe_unpack(archive, tmp_path)
+    assert info.value.hint is not None and "C:\\Instagraph" in info.value.hint
+    monkeypatch.setattr(common, "IS_WINDOWS", False)
+    with pytest.raises(common.InstallError) as info:
+        node.safe_unpack(archive, tmp_path)
+    assert info.value.hint is not None and "disk" in info.value.hint
+
+
 def test_unpack_zip(tmp_path: Path) -> None:
     archive = tmp_path / "node-v1.2.3-win-x64.zip"
     _make_zip(archive, {"node-v1.2.3-win-x64/node.exe": b"MZ", "node-v1.2.3-win-x64/npm.cmd": b""})
@@ -317,21 +549,45 @@ def test_replace_dir_failure_restores_old(tmp_path: Path, monkeypatch: pytest.Mo
     (target / "old.txt").write_text("old")
     new = tmp_path / "staging"
     new.mkdir()
-    real_replace = os.replace
+    real_rename = os.rename
     calls = []
 
-    def flaky_replace(src: Any, dst: Any) -> None:
+    def flaky_rename(src: Any, dst: Any) -> None:
         calls.append((src, dst))
         if len(calls) == 2:  # moving the new folder in
             raise KeyboardInterrupt
-        real_replace(src, dst)
+        real_rename(src, dst)
 
-    monkeypatch.setattr(os, "replace", flaky_replace)
+    monkeypatch.setattr(os, "rename", flaky_rename)
     with pytest.raises(KeyboardInterrupt):
         node.replace_dir(new, target)
-    monkeypatch.setattr(os, "replace", real_replace)
+    monkeypatch.setattr(os, "rename", real_rename)
     assert (target / "old.txt").read_text() == "old"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["node", "staging"]
+
+
+def test_replace_dir_retries_locked_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Windows, antivirus briefly locks freshly unpacked files: renames are retried."""
+    target = tmp_path / "node"
+    target.mkdir()
+    new = tmp_path / "staging"
+    new.mkdir()
+    (new / "new.txt").write_text("new")
+    real_rename = os.rename
+    failures = [PermissionError(13, "locked"), PermissionError(13, "locked")]
+
+    def locked_rename(src: Any, dst: Any) -> None:
+        if failures:
+            raise failures.pop()
+        real_rename(src, dst)
+
+    monkeypatch.setattr(common, "IS_WINDOWS", True)
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    monkeypatch.setattr(os, "rename", locked_rename)
+    node.replace_dir(new, target)
+    monkeypatch.setattr(os, "rename", real_rename)
+    assert (target / "new.txt").read_text() == "new"
+    assert not failures
 
 
 # --- find_private_node ---------------------------------------------------------------
@@ -382,6 +638,19 @@ def test_find_private_node_broken_binary(tmp_path: Path) -> None:
     assert node.find_private_node(node_dir=d, windows=False) is None
 
 
+@POSIX_ONLY
+@pytest.mark.parametrize(("mac_version", "accepted"), [("12.7.4", 22), ("14.2", node.NODE_MAJOR)])
+def test_find_private_node_major_follows_macos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mac_version: str, accepted: int
+) -> None:
+    monkeypatch.setattr(common, "IS_MACOS", True)
+    monkeypatch.setattr(platform, "mac_ver", lambda: (mac_version, ("", "", ""), ""))
+    for major in {22, node.NODE_MAJOR}:
+        d = _fake_node_dir(tmp_path / f"node{major}", f"{major}.1.0")
+        tool = node.find_private_node(node_dir=d, windows=False)
+        assert (tool is not None) is (major == accepted)
+
+
 def test_find_private_node_missing(tmp_path: Path) -> None:
     assert node.find_private_node(node_dir=tmp_path / "nothing") is None
 
@@ -414,6 +683,47 @@ def test_find_system_node(
 def test_find_system_node_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", str(tmp_path))
     assert node.find_system_node() is None
+
+
+def _exe(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("@echo off\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_find_npm_windows_prefers_cmd_next_to_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    nodejs = tmp_path / "nodejs"
+    _exe(nodejs / "npm")  # the extensionless shell script Python 3.12.0 may pick
+    cmd = _exe(nodejs / "npm.cmd")
+    other = _exe(tmp_path / "other" / "npm.cmd")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(other.parent), str(nodejs)]))
+    assert node._find_npm(nodejs / "node.exe", windows=True) == cmd
+
+
+def test_find_npm_windows_falls_back_to_cmd_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shim = tmp_path / "shims"
+    _exe(shim / "npm")
+    cmd = _exe(shim / "npm.cmd")
+    monkeypatch.setenv("PATH", str(shim))
+    found = node._find_npm(tmp_path / "elsewhere" / "node.exe", windows=True)
+    assert found is not None and found.name.lower() == "npm.cmd"
+    assert found.parent == cmd.parent
+
+
+def test_find_npm_windows_ignores_extensionless(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _exe(tmp_path / "bin" / "npm")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    if os.name == "nt":
+        pytest.skip("Windows' which never returns the extensionless file anyway")
+    assert node._find_npm(tmp_path / "node.exe", windows=True) is None
 
 
 # --- Full download flow against a local server ---------------------------------------
@@ -506,7 +816,7 @@ def test_ensure_node_downloads_and_reuses(dist: tuple[_Server, Path], tmp_path: 
     assert tool.node == node_dir / "bin" / "node"
     assert (node_dir / "VERSION").read_text().strip() == FAKE_VERSION
     assert (node_dir / "LICENSE").exists()
-    assert sorted(p.name for p in venv.iterdir()) == ["node"]
+    assert _entries(venv, ["node"]) == ["node"]
     assert server.requests == [
         "/index.json",
         f"/v{FAKE_VERSION}/SHASUMS256.txt",
@@ -557,7 +867,44 @@ def test_ensure_node_sha_mismatch(dist: tuple[_Server, Path], tmp_path: Path) ->
     venv = tmp_path / "venv"
     with pytest.raises(common.InstallError, match="checksum"):
         node.ensure_node(node_dir=venv / "node", dist_url=server.url)
-    assert list(venv.iterdir()) == []
+    assert _entries(venv, []) == []
+
+
+@pytest.mark.usefixtures("no_system_node")
+def test_ensure_node_disk_error_has_hint(
+    dist: tuple[_Server, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An OSError while setting up (here: writing VERSION) is explained, and cleaned up."""
+    server, root = dist
+    _publish(root)
+    venv = tmp_path / "venv"
+    monkeypatch.setattr(node, "_single_top_dir", lambda folder: folder / "missing")
+    monkeypatch.setattr(common, "IS_WINDOWS", True)
+    with pytest.raises(common.InstallError, match=r"Could not set up Node\.js") as info:
+        node.ensure_node(node_dir=venv / "node", dist_url=server.url)
+    assert info.value.hint is not None and "C:\\Instagraph" in info.value.hint
+    assert _entries(venv, []) == []
+
+
+def test_ensure_node_cleans_leftovers_every_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = tmp_path / "venv"
+    (venv / ".node-old-123-456" / "bin").mkdir(parents=True)
+    (venv / ".node-download-abc").mkdir()
+    (venv / ".node-unpack-abc").mkdir()
+    (venv / "node").mkdir()
+    (venv / "other").mkdir()
+    system = node.NodeTool(
+        node=tmp_path / "node",
+        npm=tmp_path / "npm",
+        bin_dir=tmp_path,
+        version=(22, 12, 0),
+        private=False,
+    )
+    monkeypatch.setattr(node, "find_system_node", lambda: system)
+    assert node.ensure_node(node_dir=venv / "node") is system
+    assert _entries(venv, ["node", "other"]) == ["node", "other"]
 
 
 @pytest.mark.usefixtures("no_system_node")
@@ -643,5 +990,5 @@ def test_download_cut_off(tmp_path: Path) -> None:
     venv = tmp_path / "venv"
     with pytest.raises(common.InstallError, match="cut off"):
         node.ensure_node(node_dir=venv / "node", dist_url="https://example.invalid", opener=opener)
-    assert list(venv.iterdir()) == []
+    assert _entries(venv, []) == []
     assert len(archive_requests) == 2  # retried once
