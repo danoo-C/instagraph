@@ -23,6 +23,7 @@ export const routes: RouteObject[] = [
       { path: "compare", ...page(() => import("@/pages/Compare")) },
       { path: "wrapped", ...page(() => import("@/pages/Wrapped")) },
       { path: "search", ...page(() => import("@/pages/Search")) },
+      { path: "ai/:id?", ...page(() => import("@/pages/Ai")) },
       { path: "settings", ...page(() => import("@/pages/Settings")) },
       { path: "*", ...page(() => import("@/pages/NotFound")) },
     ],

@@ -56,6 +56,9 @@ REDACTED_FIELDS: tuple[str, ...] = (
     "thread_merges",
     "thread_splits",
     "custom_terms",
+    "ai_default_scope",
+    "ai_person_aliases",
+    "ai_alias_disabled",
 )
 HIDDEN = "•••"
 
@@ -87,6 +90,9 @@ def redact(settings: AppSettings) -> dict[str, Any]:
     for key in ("thread_merges", "thread_splits"):
         data[key] = [{"folders": [HIDDEN] * len(m["folders"])} for m in data[key]]
     data["custom_terms"] = {}
+    data["ai_default_scope"] = [HIDDEN] * len(data["ai_default_scope"])
+    data["ai_person_aliases"] = {}
+    data["ai_alias_disabled"] = [HIDDEN] * len(data["ai_alias_disabled"])
     return data
 
 
@@ -107,6 +113,8 @@ def _validate(new: AppSettings, store: DatasetStore) -> None:
             regex.compile(pattern)
         except regex.error as exc:
             raise ValidationApiError(f"Invalid laughter pattern {pattern!r}: {exc}") from exc
+    if new.ai_enabled and not new.ai_confirmed_notice:
+        raise ValidationApiError("Confirm the AI notice before turning the AI assistant on.")
     ds = store.peek()
     if new.owner_person_id is not None and ds is not None:
         ids = ds.people_df()["person_id"]

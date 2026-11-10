@@ -55,7 +55,12 @@ LEAKS = [
 ]
 
 #: Path parameter values for the fixture dataset.
-PARAMS = {"chat_id": ["0", "1", "2"], "person_id": ["1", "2"], "message_id": ["0", "7"]}
+PARAMS = {
+    "chat_id": ["0", "1", "2"],
+    "person_id": ["1", "2"],
+    "message_id": ["0", "7"],
+    "conv_id": ["0" * 32],  # no conversations in the fixture (404); see tests/ai/test_api.py
+}
 #: Not JSON / not data-bearing in the fixture.
 SKIP_PREFIXES = ("/api/media/", "/api/import/jobs/")
 
@@ -70,7 +75,10 @@ def anon_client(tmp_path: Path, small_dataset: Dataset) -> Iterator[TestClient]:
         }
     )
     with make_client(tmp_path / "data", small_dataset) as c:
-        resp = c.put("/api/settings", json={"anonymize": True})
+        resp = c.put(
+            "/api/settings",
+            json={"anonymize": True, "ai_enabled": True, "ai_confirmed_notice": True},
+        )
         assert resp.status_code == 200, resp.text
         yield c
 

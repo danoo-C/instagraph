@@ -9,6 +9,7 @@ export const sk: Partial<Record<TranslationKey, string>> = {
   "nav.compare": "Porovnanie",
   "nav.wrapped": "Wrapped",
   "nav.search": "Hľadať",
+  "nav.ai": "AI",
   "nav.settings": "Nastavenia",
   "privacy.local": "Vaše dáta zostávajú na tomto počítači.",
   "filters.allTime": "Celé obdobie",

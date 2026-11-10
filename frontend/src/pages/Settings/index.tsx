@@ -24,6 +24,7 @@ import {
   TextSection,
   TimeSection,
 } from "@/features/settings/sections";
+import { AiSettingsSection } from "@/features/ai/SettingsSection";
 import { cn } from "@/lib/utils";
 
 type SettingsResponse = Schemas["SettingsResponse"];
@@ -38,6 +39,7 @@ const TOC = [
   ["text", "Words"],
   ["emoji", "Emojis"],
   ["privacy", "Anonymize"],
+  ["ai", "AI"],
   ["appearance", "Appearance"],
   ["export", "Export"],
   ["danger", "Clear data"],
@@ -140,6 +142,7 @@ export default function SettingsPage() {
         busy={save.isPending}
         onChange={(v) => saveNow({ anonymize: v })}
       />
+      <AiSettingsSection {...props} />
       <AppearanceSection saveNow={saveNow} />
       <ExportSection anonymize={server.anonymize} />
       <DangerSection />

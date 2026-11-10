@@ -55,6 +55,10 @@ chat on its own, and each person in it.
 - **Fast on large exports:** built for 1,000+ chats and 2,000,000+ messages
   (Polars + Parquet).
 - **Anonymize mode:** replaces all names with "Person A/B/C…" for safe screenshots.
+- **Optional AI assistant (off by default):** ask Claude about your chats in plain language,
+  or run ready-made reports. It uses the app's own statistics, cites messages you can open,
+  reads only the chats you allow, and can hide names behind placeholders. Needs your own
+  Anthropic API key and `pip install 'instagraph[ai]'`.
 - Light and dark theme, keyboard accessible, and every chart can be shown as a table.
 
 ## Screenshots
@@ -138,6 +142,11 @@ a fake dataset.
   containing `*`. Export zips and unpacked export folders are ignored too, so private
   messages can't be committed by accident.
 - **Settings → Clear all data** deletes everything Instagraph stored.
+- **Optional AI tab:** the only feature that sends data off your computer, and it's off by
+  default. When you turn it on and send a message, the chats you allowed are sent to
+  Anthropic's API using your own API key (names hidden by default). Your chats include other
+  people's messages, so share only what you're comfortable with. Details:
+  `docs/ai-assistant.md`.
 
 ## Configuration
 
@@ -151,6 +160,7 @@ Environment variables (or a `.env` file in `backend/`):
 | `INSTAGRAPH_WORKERS` | CPU count − 1 | Number of processes used to parse the export |
 | `INSTAGRAPH_ALLOWED_HOSTS` | (empty) | Extra hostnames accepted in the `Host` header (`./launch --lan` sets this) |
 | `INSTAGRAPH_CORS_ORIGINS` | `http://localhost:5173` | Allowed CORS origins (dev server only) |
+| `ANTHROPIC_API_KEY` | (empty) | Optional: API key for the AI tab (otherwise set it in Settings → AI) |
 
 Analysis options such as time zone, session gap, reply window, stop words, merging people
 and anonymize mode are in the app's **Settings** page.

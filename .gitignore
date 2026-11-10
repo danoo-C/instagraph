@@ -42,3 +42,8 @@ frontend/playwright-report/
 .idea/
 .vscode/
 .DS_Store
+
+# Private AI providers (personal use only, never committed): docs/ai-assistant.md A8.9
+backend/src/instagraph/ai/providers/*_local.py
+backend/src/instagraph/ai/providers/*_local/
+backend/tests/ai/*_local.py
