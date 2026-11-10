@@ -1,6 +1,6 @@
 # Plan: Cross-platform installer (`install.py`) and desktop icon
 
-**Status:** Planned. The icon (step 1) is done; steps 2–8 are not started.
+**Status:** In progress on `feat/installer`. Icon done.
 **Date:** 2026-11-10
 **Scope:** New files `install.py`, `run.py`, `assets/icon.*`; README "Getting started"; a CI
 workflow. No changes to the backend or frontend code.
@@ -89,7 +89,7 @@ existing install.
    - Run `npm ci` and `npm run build` in `frontend/`. Put the chosen Node's folder first on
      `PATH` for these commands only, so npm's scripts run with the same Node.
    - Also don't skip the step if `node_modules` was installed on another OS (case B). The
-     build would fail with esbuild/rollup errors.
+     build would fail with rolldown/lightningcss errors.
    - Windows needs `npm.cmd`. With system Node, use `shutil.which("npm")`, which finds the
      right name. With private Node, call `node/npm.cmd` (Windows) or `node/bin/npm` directly.
 5. **Desktop icon:** ask "Create a desktop icon? [Y/n]" (`--shortcut` / `--no-shortcut`).
@@ -301,8 +301,8 @@ the same advice instead of the raw pip output.
 
 Example: the repo is on `/mnt/c/...`, and you run `install.py` from WSL and from Windows. A
 venv only works on the OS that made it: Windows uses `Scripts\python.exe` and Linux uses
-`bin/python`, and the compiled packages differ. `node_modules` also holds OS-specific esbuild
-and rollup binaries. The built `frontend/dist/` and `data/` work on both.
+`bin/python`, and the compiled packages differ. `node_modules` also holds OS-specific
+rolldown and lightningcss binaries. The built `frontend/dist/` and `data/` work on both.
 
 Venv check:
 
@@ -317,8 +317,8 @@ Venv check:
 
 `node_modules` check (step 4):
 
-- Vite pulls in OS-specific packages, so check that `node_modules/@esbuild/<os>-<cpu>`
-  exists for this OS (for example `@esbuild/win32-x64` or `@esbuild/linux-x64`). If it
+- Vite 8 pulls in OS-specific packages, so check that a `node_modules/@rolldown/binding-<os>-<cpu>*`
+  folder exists for this OS (for example `binding-win32-x64-msvc` or `binding-linux-x64-gnu`). If it
   doesn't, run `npm ci`, which deletes `node_modules` and reinstalls it for this OS, and
   print why.
 - This also covers `node_modules` folders made by `make setup`, without a marker file.
