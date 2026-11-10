@@ -1,0 +1,21 @@
+{
+  "_doc": "Slovak / Czech name endings for the AI pseudonymizer (docs/ai-assistant.md A6.2). A known name also matches when one of these endings is added to its stem: the name itself for names ending in a consonant (Daniel -> Danielovi, Dan -> Danko), the name minus its final vowel for names ending in a/e/i/o/u/y (Eva -> Evou, Jana -> Janka), and the name without its mobile 'e' for -ek/-ec/-el (Pavel -> Pavla). Compared accent- and case-insensitively; forms that are stop-words (e.g. 'áno') are never treated as names.",
+  "endings": [
+    "a", "o", "u", "e", "i", "y", "á", "é", "í", "ý", "ú",
+    "ou", "om", "em", "ov",
+    "ovi", "ove", "ovej", "ovho", "ovu", "ovou", "ovom", "ova", "ová", "ovia", "ových", "ovým", "ovými",
+    "ej", "eho", "ého", "emu", "ému", "ým", "ých", "ými", "im", "ím", "imu", "iho",
+    "ám", "ách", "ami", "ach", "am", "ům", "ech",
+    "ek", "ko", "ka", "ke", "ku", "ky", "kou", "kom", "kovi", "kove", "kovia",
+    "ík", "íka", "íkovi", "íkom", "íku", "íček", "íčka", "íčkovi", "íčkom",
+    "inka", "inke", "inku", "inky", "inkou", "ina", "ine", "inu", "iny", "inou",
+    "ička", "ičke", "ičku", "ičky", "ičkou",
+    "ečka", "ečke", "ečku", "ečky", "ečkou", "ečko",
+    "uška", "uške", "ušku", "ušky", "uškou",
+    "ulka", "ulke", "ulku", "ulky", "ulkou", "ulko",
+    "ienka", "ienke", "ienku", "ienky", "ienkou",
+    "enka", "enke", "enku", "enky", "enkou", "enko",
+    "uľka", "uľko", "ino", "isko", "íško", "ušo", "očka", "očko", "ýš",
+    "inko", "ienko", "ča", "čo", "čka", "ško", "ška"
+  ]
+}

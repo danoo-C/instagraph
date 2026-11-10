@@ -25,6 +25,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional AI assistant (docs/ai-assistant.md): the Anthropic API provider.
+ai = ["anthropic>=2.7"]
 dev = [
     "pytest>=8",
     "httpx>=0.27",
@@ -32,6 +34,7 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
     "types-regex",
+    "anthropic>=2.7",
 ]
 
 [tool.hatch.build.targets.wheel]

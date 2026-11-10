@@ -34,6 +34,13 @@ const base: AppSettings = {
   anonymize: false,
   theme: "system",
   ui_language: "en",
+  ai_enabled: false,
+  ai_confirmed_notice: false,
+  ai_provider: "anthropic",
+  ai_model: "claude-opus-5-5",
+  ai_effort: "medium",
+  ai_hide_names: true,
+  ai_include_new_chats: false,
 };
 
 describe("diffSettings", () => {

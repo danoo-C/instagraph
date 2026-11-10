@@ -8,6 +8,7 @@ export const en = {
   "nav.compare": "Compare",
   "nav.wrapped": "Wrapped",
   "nav.search": "Search",
+  "nav.ai": "AI",
   "nav.settings": "Settings",
   "nav.menu": "Menu",
   "nav.close": "Close menu",

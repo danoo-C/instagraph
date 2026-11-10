@@ -4,6 +4,178 @@
  */
 
 export interface paths {
+    "/api/ai/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ai Status
+         * @description Whether the AI is on, which providers exist and whether they are ready.
+         *     Works with the feature off and without data.
+         */
+        get: operations["ai_status_api_ai_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save Key
+         * @description Store the Anthropic API key (owner-only file in the data directory).
+         */
+        put: operations["save_key_api_ai_key_put"];
+        post?: never;
+        /**
+         * Remove Key
+         * @description Remove the stored key (a key from ``ANTHROPIC_API_KEY`` stays in effect).
+         */
+        delete: operations["remove_key_api_ai_key_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/key/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Key
+         * @description Check a key (the given one, else the stored one) with a free API call.
+         */
+        post: operations["test_key_api_ai_key_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Conversations */
+        get: operations["list_conversations_api_ai_conversations_get"];
+        put?: never;
+        /**
+         * Create Conversation
+         * @description New conversation. Unset fields come from the AI settings (chats, name hiding,
+         *     provider, model, effort).
+         */
+        post: operations["create_conversation_api_ai_conversations_post"];
+        /** Delete All Conversations */
+        delete: operations["delete_all_conversations_api_ai_conversations_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/conversations/{conv_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Conversation */
+        get: operations["get_conversation_api_ai_conversations__conv_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Conversation */
+        delete: operations["delete_conversation_api_ai_conversations__conv_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Patch Conversation
+         * @description Rename, change the allowed chats, or (before the first message) name hiding.
+         */
+        patch: operations["patch_conversation_api_ai_conversations__conv_id__patch"];
+        trace?: never;
+    };
+    "/api/ai/conversations/{conv_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Message
+         * @description Send a message and stream the answer. Problems found before the answer starts
+         *     (feature off, provider not ready, an answer already running) are normal HTTP errors.
+         */
+        post: operations["send_message_api_ai_conversations__conv_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/conversations/{conv_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Answer
+         * @description Stop the running answer (``deleted`` = 1 if one was running).
+         */
+        post: operations["stop_answer_api_ai_conversations__conv_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai/conversations/{conv_id}/last-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Last Request
+         * @description What the last answer sent to the provider: system prompt, the message, and every
+         *     tool call with its result, exactly as sent (pseudonymized when names were hidden).
+         */
+        get: operations["last_request_api_ai_conversations__conv_id__last_request_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chats/{chat_id}/awards": {
         parameters: {
             query?: never;
@@ -1152,6 +1324,289 @@ export interface components {
             dataset_version: number;
             timeline: components["schemas"]["TimeSeries"];
         };
+        /** AiConversation */
+        AiConversation: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "ask" | "report";
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high";
+            /** Hide Names */
+            hide_names: boolean;
+            /** Names Locked */
+            names_locked: boolean;
+            /** Running */
+            running: boolean;
+            /** Scope Chats */
+            scope_chats: components["schemas"]["AiScopeChat"][];
+            /** Scope Missing */
+            scope_missing: number;
+            /** Turns */
+            turns: components["schemas"]["AiTurn"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AiConversationCreate */
+        AiConversationCreate: {
+            /** Chat Ids */
+            chat_ids?: number[] | null;
+            /** Hide Names */
+            hide_names?: boolean | null;
+            /** Provider */
+            provider?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Effort */
+            effort?: ("low" | "medium" | "high") | null;
+            /**
+             * Mode
+             * @default ask
+             * @enum {string}
+             */
+            mode: "ask" | "report";
+            /** Title */
+            title?: string | null;
+        };
+        /** AiConversationList */
+        AiConversationList: {
+            /** Items */
+            items: components["schemas"]["AiConversationSummary"][];
+        };
+        /** AiConversationPatch */
+        AiConversationPatch: {
+            /** Title */
+            title?: string | null;
+            /** Chat Ids */
+            chat_ids?: number[] | null;
+            /** Hide Names */
+            hide_names?: boolean | null;
+        };
+        /** AiConversationSummary */
+        AiConversationSummary: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Mode */
+            mode: string;
+            /** Provider */
+            provider: string;
+            /** Hide Names */
+            hide_names: boolean;
+            /** Scope Size */
+            scope_size: number;
+            /** Turns */
+            turns: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AiDeleted */
+        AiDeleted: {
+            /** Deleted */
+            deleted: number;
+        };
+        /** AiKeyInfo */
+        AiKeyInfo: {
+            /** Set */
+            set: boolean;
+            /** Source */
+            source?: ("env" | "file") | null;
+            /**
+             * Hint
+             * @default
+             */
+            hint: string;
+        };
+        /** AiKeySave */
+        AiKeySave: {
+            /** Key */
+            key: string;
+        };
+        /** AiKeyTest */
+        AiKeyTest: {
+            /** Ok */
+            ok: boolean;
+            /** Message */
+            message: string;
+        };
+        /** AiLastRequest */
+        AiLastRequest: {
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** System Prompt */
+            system_prompt: string;
+            /** User Message */
+            user_message: string;
+            /** Tools */
+            tools: string[];
+            /** Tool Calls */
+            tool_calls: components["schemas"]["AiToolCall"][];
+        };
+        /** AiMessageCreate */
+        AiMessageCreate: {
+            /** Text */
+            text: string;
+        };
+        /** AiProviderInfo */
+        AiProviderInfo: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Available */
+            available: boolean;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /** Models */
+            models?: string[];
+        };
+        /** AiScopeChat */
+        AiScopeChat: {
+            /** Chat Id */
+            chat_id: number;
+            /** Title */
+            title: string;
+        };
+        /** AiStatusResponse */
+        AiStatusResponse: {
+            /** Enabled */
+            enabled: boolean;
+            /** Confirmed Notice */
+            confirmed_notice: boolean;
+            /** Has Data */
+            has_data: boolean;
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /**
+             * Effort
+             * @enum {string}
+             */
+            effort: "low" | "medium" | "high";
+            /** Hide Names Default */
+            hide_names_default: boolean;
+            /** Default Chat Ids */
+            default_chat_ids: number[];
+            /** Providers */
+            providers: components["schemas"]["AiProviderInfo"][];
+            api_key: components["schemas"]["AiKeyInfo"];
+        };
+        /** AiToolActivity */
+        AiToolActivity: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Args */
+            args?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /**
+             * Is Error
+             * @default false
+             */
+            is_error: boolean;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /** AiToolCall */
+        AiToolCall: {
+            /** Name */
+            name: string;
+            /** Args */
+            args: {
+                [key: string]: unknown;
+            };
+            /** Result */
+            result: unknown;
+            /** Is Error */
+            is_error: boolean;
+        };
+        /** AiTurn */
+        AiTurn: {
+            /** User Text */
+            user_text: string;
+            /** Answer */
+            answer: string;
+            /** Tools */
+            tools: components["schemas"]["AiToolActivity"][];
+            usage: components["schemas"]["AiUsage"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "done" | "stopped" | "error";
+            /** Error */
+            error?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+        };
+        /** AiUsage */
+        AiUsage: {
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Cache Read Input Tokens
+             * @default 0
+             */
+            cache_read_input_tokens: number;
+            /**
+             * Cache Creation Input Tokens
+             * @default 0
+             */
+            cache_creation_input_tokens: number;
+        };
         /** AppSettings */
         AppSettings: {
             /** Owner Person Id */
@@ -1228,6 +1683,50 @@ export interface components {
              * @enum {string}
              */
             ui_language: "en" | "sk";
+            /**
+             * Ai Enabled
+             * @default false
+             */
+            ai_enabled: boolean;
+            /**
+             * Ai Confirmed Notice
+             * @default false
+             */
+            ai_confirmed_notice: boolean;
+            /**
+             * Ai Provider
+             * @default anthropic
+             */
+            ai_provider: string;
+            /**
+             * Ai Model
+             * @default claude-opus-5-5
+             */
+            ai_model: string;
+            /**
+             * Ai Effort
+             * @default medium
+             * @enum {string}
+             */
+            ai_effort: "low" | "medium" | "high";
+            /**
+             * Ai Hide Names
+             * @default true
+             */
+            ai_hide_names: boolean;
+            /** Ai Default Scope */
+            ai_default_scope?: string[];
+            /**
+             * Ai Include New Chats
+             * @default false
+             */
+            ai_include_new_chats: boolean;
+            /** Ai Person Aliases */
+            ai_person_aliases?: {
+                [key: string]: string[];
+            };
+            /** Ai Alias Disabled */
+            ai_alias_disabled?: string[];
         };
         /** Attachments */
         Attachments: {
@@ -3840,6 +4339,28 @@ export interface components {
             theme?: ("system" | "light" | "dark") | null;
             /** Ui Language */
             ui_language?: ("en" | "sk") | null;
+            /** Ai Enabled */
+            ai_enabled?: boolean | null;
+            /** Ai Confirmed Notice */
+            ai_confirmed_notice?: boolean | null;
+            /** Ai Provider */
+            ai_provider?: string | null;
+            /** Ai Model */
+            ai_model?: string | null;
+            /** Ai Effort */
+            ai_effort?: ("low" | "medium" | "high") | null;
+            /** Ai Hide Names */
+            ai_hide_names?: boolean | null;
+            /** Ai Default Scope */
+            ai_default_scope?: string[] | null;
+            /** Ai Include New Chats */
+            ai_include_new_chats?: boolean | null;
+            /** Ai Person Aliases */
+            ai_person_aliases?: {
+                [key: string]: string[];
+            } | null;
+            /** Ai Alias Disabled */
+            ai_alias_disabled?: string[] | null;
         };
         /** ShareInfo */
         ShareInfo: {
@@ -4505,6 +5026,649 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    ai_status_api_ai_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiStatusResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_key_api_ai_key_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiKeySave"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiKeyInfo"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_key_api_ai_key_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiKeyInfo"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    test_key_api_ai_key_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AiKeySave"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiKeyTest"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_conversations_api_ai_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiConversationList"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_conversation_api_ai_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiConversationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiConversation"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_all_conversations_api_ai_conversations_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDeleted"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_conversation_api_ai_conversations__conv_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiConversation"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_conversation_api_ai_conversations__conv_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDeleted"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patch_conversation_api_ai_conversations__conv_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiConversationPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiConversation"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    send_message_api_ai_conversations__conv_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiMessageCreate"];
+            };
+        };
+        responses: {
+            /** @description SSE stream of `text`, `tool_start`, `tool_end`, `usage` and `error` events, then one `done` event. Each `data` is a JSON object with a `type` field. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    stop_answer_api_ai_conversations__conv_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDeleted"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    last_request_api_ai_conversations__conv_id__last_request_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiLastRequest"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No data imported yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Invalid parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     chat_awards_api_chats__chat_id__awards_get: {
         parameters: {
             query?: {

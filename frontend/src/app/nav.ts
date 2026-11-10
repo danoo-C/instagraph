@@ -13,6 +13,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/compare", label: "nav.compare" },
   { to: "/wrapped", label: "nav.wrapped" },
   { to: "/search", label: "nav.search" },
+  { to: "/ai", label: "nav.ai" },
   { to: "/settings", label: "nav.settings" },
 ];
 

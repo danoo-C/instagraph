@@ -34,7 +34,23 @@ DEFAULT_LAUGHTER_PATTERNS: list[str] = [
 ]
 
 #: Fields that do not influence computed stats (excluded from ``settings_hash``).
-UI_ONLY_FIELDS: frozenset[str] = frozenset({"theme", "ui_language"})
+#: AI assistant settings (docs/ai-assistant.md A8.6). They never affect stats.
+AI_FIELDS: frozenset[str] = frozenset(
+    {
+        "ai_enabled",
+        "ai_confirmed_notice",
+        "ai_provider",
+        "ai_model",
+        "ai_effort",
+        "ai_hide_names",
+        "ai_default_scope",
+        "ai_include_new_chats",
+        "ai_person_aliases",
+        "ai_alias_disabled",
+    }
+)
+
+UI_ONLY_FIELDS: frozenset[str] = frozenset({"theme", "ui_language"}) | AI_FIELDS
 
 
 class PeopleMerge(BaseModel):
@@ -99,6 +115,24 @@ class AppSettings(BaseModel):
     anonymize: bool = False
     theme: Literal["system", "light", "dark"] = "system"
     ui_language: Literal["en", "sk"] = "en"
+
+    # AI assistant (docs/ai-assistant.md A8.6). Off by default; nothing leaves the
+    # computer while ``ai_enabled`` is False.
+    ai_enabled: bool = False
+    ai_confirmed_notice: bool = False
+    """The user confirmed the one-time "what is sent where" notice."""
+    ai_provider: str = "anthropic"
+    ai_model: str = "claude-opus-5-5"
+    ai_effort: Literal["low", "medium", "high"] = "medium"
+    ai_hide_names: bool = True
+    """Default for new AI conversations: replace names with placeholders before sending."""
+    ai_default_scope: list[str] = Field(default_factory=list)
+    """Thread folder keys the AI may read in new conversations (empty = no chats)."""
+    ai_include_new_chats: bool = False
+    ai_person_aliases: dict[str, list[str]] = Field(default_factory=dict)
+    """Extra names to hide, keyed by the person's display name."""
+    ai_alias_disabled: list[str] = Field(default_factory=list)
+    """Display names whose names are not matched inside message text (common words)."""
 
     def settings_hash(self) -> str:
         """Short stable hash of all stat-affecting fields (used in cache keys)."""
