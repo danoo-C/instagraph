@@ -70,6 +70,16 @@ class ShortcutError(Exception):
 # --- Public API ----------------------------------------------------------------------
 
 
+def _wsl_wants_windows_icon(previous: Iterable[str | Path]) -> bool:
+    """On WSL: Windows icon or Linux shortcut? Reuse the earlier choice, else ask."""
+    suffixes = {Path(p).suffix.lower() for p in previous}
+    if ".lnk" in suffixes:
+        return True
+    if ".desktop" in suffixes:
+        return False
+    return ui.ask_yes_no("Create a Windows desktop icon (starts Instagraph in WSL)?", default=True)
+
+
 def create_shortcuts(
     *,
     repo: Path = REPO_ROOT,
@@ -81,8 +91,12 @@ def create_shortcuts(
     env: Mapping[str, str] | None = None,
     runner: Runner | None = None,
     which: Which | None = None,
+    previous: Iterable[str | Path] = (),
 ) -> ShortcutResult:
     """Create or update this copy's shortcuts (asks on conflicts, see case C).
+
+    ``previous``: shortcuts from an earlier install (the install record). On WSL they
+    decide between a Windows and a Linux icon, so an update doesn't ask again.
 
     ``repo``/``python``: the copy to start (default: this repo and its venv Python).
     ``platform``: force a code path; default is the OS we run on.
@@ -108,9 +122,7 @@ def create_shortcuts(
         _create_windows(ctx)
     elif plat == "macos":
         _create_macos(ctx, desktop_dir)
-    elif plat == "wsl" and ui.ask_yes_no(
-        "Create a Windows desktop icon (starts Instagraph in WSL)?", default=True
-    ):
+    elif plat == "wsl" and _wsl_wants_windows_icon(previous):
         if not _create_wsl(ctx):
             _create_linux(ctx, desktop_dir, apps_dir)
     else:

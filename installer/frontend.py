@@ -129,6 +129,14 @@ def frontend_state(
     return FrontendState(needs_install=False, needs_build=False, reason="up to date")
 
 
+def _show_npm_line(line: str) -> bool:
+    """The npm / Vite output lines worth showing without --verbose."""
+    text = line.strip()
+    return text.startswith(("added ", "✓ built in")) or text.lower().startswith(
+        ("npm error", "error")
+    )
+
+
 def build_frontend(
     node: NodeTool, state: FrontendState, *, frontend_dir: Path | None = None
 ) -> str:
@@ -137,19 +145,28 @@ def build_frontend(
     if not state.needs_install and not state.needs_build:
         return "Frontend: up to date"
     env = common.env_with_path(node.bin_dir)
+    # No "new npm version available" notices, funding or audit messages in our output.
+    env.update(
+        NPM_CONFIG_UPDATE_NOTIFIER="false", NPM_CONFIG_FUND="false", NPM_CONFIG_AUDIT="false"
+    )
     kind = "private" if node.private else "system"
     label = f"Node {format_version(node.version)} ({kind})"
 
     if state.needs_install:
-        ui.info(f"Installing frontend packages with npm ci ({state.reason})…")
+        ui.info("Installing frontend packages (npm ci). This can take a minute…")
         try:
-            common.run([node.npm, "ci", "--no-audit", "--no-fund"], cwd=frontend_dir, env=env)
+            common.run_tee(
+                [node.npm, "ci", "--no-audit", "--no-fund"],
+                cwd=frontend_dir,
+                env=env,
+                show=_show_npm_line,
+            )
         except common.CommandError as exc:
             raise common.CommandError(
                 "Installing the frontend packages (npm ci) failed.",
                 returncode=exc.returncode,
                 output=exc.output,
-                hint="The output above shows why. npm downloads packages from "
+                hint="The lines above show why. npm downloads packages from "
                 "registry.npmjs.org, so check your internet connection (and HTTPS_PROXY). "
                 "If another program uses frontend/node_modules, close it. Then run the "
                 "installer again.",
@@ -157,13 +174,13 @@ def build_frontend(
 
     ui.info(f"Building the frontend with {label}…")
     try:
-        common.run([node.npm, "run", "build"], cwd=frontend_dir, env=env)
+        common.run_tee([node.npm, "run", "build"], cwd=frontend_dir, env=env, show=_show_npm_line)
     except common.CommandError as exc:
         raise common.CommandError(
             "Building the frontend (npm run build) failed.",
             returncode=exc.returncode,
             output=exc.output,
-            hint="The output above shows why. If frontend/node_modules looks broken, delete "
+            hint="The lines above show why. If frontend/node_modules looks broken, delete "
             "that folder and run the installer again; it reinstalls the packages.",
         ) from exc
     verb = "installed packages and built" if state.needs_install else "built"

@@ -246,14 +246,13 @@ class _Recorder:
         *,
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
-        check: bool = True,
-        capture: bool = False,
+        show: Any = None,
     ) -> Any:
         args = [str(c) for c in cmd]
         self.calls.append((args, cwd, env))
         if self.fail_on is not None and self.fail_on in args:
             raise common.CommandError("boom", returncode=2, output="err")
-        return None
+        return ""
 
 
 def _tool(tmp_path: Path, *, private: bool = True) -> NodeTool:
@@ -274,7 +273,7 @@ def _path_of(env: Mapping[str, str] | None) -> str:
 
 def test_build_with_install(fe: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _Recorder()
-    monkeypatch.setattr(common, "run", rec)
+    monkeypatch.setattr(common, "run_tee", rec)
     tool = _tool(tmp_path)
     state = frontend.FrontendState(True, True, "node_modules is missing")
     summary = frontend.build_frontend(tool, state, frontend_dir=fe)
@@ -289,7 +288,7 @@ def test_build_with_install(fe: Path, tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_build_only(fe: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _Recorder()
-    monkeypatch.setattr(common, "run", rec)
+    monkeypatch.setattr(common, "run_tee", rec)
     state = frontend.FrontendState(False, True, "src/a.tsx changed since the last build")
     summary = frontend.build_frontend(_tool(tmp_path, private=False), state, frontend_dir=fe)
     assert [c[0][1:] for c in rec.calls] == [["run", "build"]]
@@ -300,7 +299,7 @@ def test_build_only(fe: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_nothing_to_do(fe: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _Recorder()
-    monkeypatch.setattr(common, "run", rec)
+    monkeypatch.setattr(common, "run_tee", rec)
     state = frontend.FrontendState(False, False, "up to date")
     assert (
         frontend.build_frontend(_tool(tmp_path), state, frontend_dir=fe) == "Frontend: up to date"
@@ -312,7 +311,7 @@ def test_nothing_to_do(fe: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_failures_have_hints(
     fe: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_on: str, words: str
 ) -> None:
-    monkeypatch.setattr(common, "run", _Recorder(fail_on=fail_on))
+    monkeypatch.setattr(common, "run_tee", _Recorder(fail_on=fail_on))
     state = frontend.FrontendState(True, True, "node_modules is missing")
     with pytest.raises(common.CommandError) as info:
         frontend.build_frontend(_tool(tmp_path), state, frontend_dir=fe)
@@ -326,3 +325,11 @@ def test_default_dir_is_repo_frontend() -> None:
     """Only reads: the real frontend/ is inspected, never changed."""
     state = frontend.frontend_state()
     assert isinstance(state.reason, str) and state.reason
+
+
+def test_only_key_npm_lines_are_shown() -> None:
+    assert frontend._show_npm_line("added 412 packages in 21s")
+    assert frontend._show_npm_line("✓ built in 1.31s")
+    assert frontend._show_npm_line("npm error code ERESOLVE")
+    assert not frontend._show_npm_line("dist/assets/index-Bk1CcyXt.css   32.66 kB")
+    assert not frontend._show_npm_line("> tsc -b && vite build")

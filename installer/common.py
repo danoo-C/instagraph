@@ -18,7 +18,7 @@ import tempfile
 import tomllib
 import urllib.error
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -181,6 +181,52 @@ def run(
             output=result.stdout or "",
         )
     return result
+
+
+def run_tee(
+    cmd: Sequence[str | Path],
+    *,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    show: Callable[[str], bool] = lambda line: True,
+) -> str:
+    """Run a command, print only the output lines ``show`` accepts, and return all output.
+
+    With ``--verbose`` every line is printed. A non-zero exit raises :class:`CommandError`
+    with the full output, so the caller can show its tail.
+    """
+    ui.detail(f"$ {format_cmd(cmd)}" + (f"   (in {cwd})" if cwd else ""))
+    lines: list[str] = []
+    try:
+        proc = subprocess.Popen(
+            [str(c) for c in cmd],
+            cwd=cwd,
+            env=dict(env) if env is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise InstallError(f"Could not run {cmd[0]}: program not found.") from exc
+    except OSError as exc:
+        raise InstallError(f"Could not run {cmd[0]}: {exc}") from exc
+    assert proc.stdout is not None
+    with proc:
+        for raw in proc.stdout:
+            line = raw.rstrip()
+            lines.append(line)
+            if ui.verbose() or show(line):
+                ui.info(line)
+    output = "\n".join(lines)
+    if proc.returncode != 0:
+        raise CommandError(
+            f"This command failed (exit code {proc.returncode}): {format_cmd(cmd)}",
+            returncode=proc.returncode,
+            output=output,
+        )
+    return output
 
 
 def env_with_path(prepend: Path, base: Mapping[str, str] | None = None) -> dict[str, str]:

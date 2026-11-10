@@ -165,7 +165,7 @@ class Env:
         private = self.private_node or force_private
         return NodeTool(Path("node"), Path("npm"), Path("."), (24, 1, 0), private)
 
-    def create_shortcuts(self) -> ShortcutResult:
+    def create_shortcuts(self, *, previous: object = ()) -> ShortcutResult:
         self.events.append("create_shortcuts")
         for f in self.shortcut_files:
             f.parent.mkdir(parents=True, exist_ok=True)
@@ -361,7 +361,7 @@ def test_install_error_is_reported(env: Env, capsys: pytest.CaptureFixture[str])
 
 
 def test_shortcut_error_is_only_a_warning(env: Env, capsys: pytest.CaptureFixture[str]) -> None:
-    def fail() -> ShortcutResult:
+    def fail(*, previous: object = ()) -> ShortcutResult:
         raise InstallError("No desktop folder.")
 
     env.mp.setattr(shortcuts, "create_shortcuts", fail)

@@ -110,7 +110,7 @@ def ask_choice(
     (or ``default``).
     """
     labels = " / ".join(
-        f"[{key.upper()}]{label}" if key == default else f"[{key}]{label}"
+        f"[{key.upper()}] {label}" if key == default else f"[{key}] {label}"
         for key, label in choices.items()
     )
     if not interactive():

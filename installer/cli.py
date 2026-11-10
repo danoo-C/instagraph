@@ -327,7 +327,7 @@ def install(args: argparse.Namespace, paths: Paths) -> int:
     state = frontend.frontend_state(rebuild=args.rebuild)
     if state.needs_install or state.needs_build:
         if state.reason:
-            ui.info(state.reason)
+            ui.info(f"Needs a build: {state.reason}.")
         tool = node.ensure_node(force_private=args.private_node)
         record.update(node="private" if tool.private else "system")
         result = frontend.build_frontend(tool, state).strip()
@@ -365,7 +365,7 @@ def _shortcut_step(args: argparse.Namespace, record: Record) -> list[str]:
             return ["Desktop icon: left as it is"]
         return ["Desktop icon: not created"]
     try:
-        result = shortcuts.create_shortcuts()
+        result = shortcuts.create_shortcuts(previous=existing)
     except InstallError as exc:
         # Everything else worked; a missing icon shouldn't fail the whole install.
         ui.warn(f"Could not create the desktop icon: {exc.message}")

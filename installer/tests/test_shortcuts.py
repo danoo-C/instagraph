@@ -674,3 +674,14 @@ def test_wsl_unsafe_path_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     apps = tmp_path / "apps"
     result = run_wsl(s, repo=repo, apps_dir=apps, home=tmp_path / "nohome")
     assert result.created == [apps / LINUX_FILE]
+
+
+def test_wsl_reuses_earlier_icon_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_questions(*args: object, **kwargs: object) -> bool:
+        raise AssertionError("should not ask")
+
+    monkeypatch.setattr(ui, "ask_yes_no", no_questions)
+    assert shortcuts._wsl_wants_windows_icon(["/mnt/c/Users/x/Desktop/Instagraph.lnk"])
+    assert not shortcuts._wsl_wants_windows_icon(["/home/x/Desktop/instagraph.desktop"])
+    monkeypatch.setattr(ui, "ask_yes_no", lambda *a, **k: True)
+    assert shortcuts._wsl_wants_windows_icon([])
