@@ -1,0 +1,187 @@
+# Installs Instagraph with install.py on Windows, macOS and Linux, starts it with run.py,
+# and checks the update path (docs/plans/cross-platform-installer.md, step 8).
+name: Installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install.py (${{ matrix.os }})
+    strategy:
+      # One OS failing shouldn't hide the results of the others.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Git Bash on Windows, so every step is the same script on all three systems.
+        shell: bash
+    env:
+      PORT: "8765"
+      VENV_PY: ${{ matrix.os == 'windows-latest' && 'backend/.venv/Scripts/python.exe' || 'backend/.venv/bin/python' }}
+      # No PYTHONIOENCODING here on purpose: users' redirected output on Windows is cp1252,
+      # and the installer must cope with that.
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Only Python is set up. Node is deliberately left alone: the job tests the
+      # installer's private Node.js download.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Fresh install. --private-node downloads Node from nodejs.org even though the
+      # runners already have a system Node, so the download path is what gets tested.
+      - name: Install
+        id: install
+        run: python install.py --yes --no-shortcut --private-node
+
+      # Start the app the way the desktop icon does, in the background, and wait until it
+      # answers. Output goes to a file so the background process doesn't hold the step's
+      # output pipe open.
+      - name: Start the app
+        run: |
+          python run.py --no-browser --port "$PORT" < /dev/null > server.log 2>&1 &
+          echo "RUN_PID=$!" >> "$GITHUB_ENV"
+          # Git Bash PIDs aren't Windows PIDs; taskkill needs the real one.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "RUN_WINPID=$(cat "/proc/$!/winpid")" >> "$GITHUB_ENV"
+          fi
+          python - <<'EOF'
+          import json, os, sys, time, urllib.request
+          from pathlib import Path
+
+          url = f"http://127.0.0.1:{os.environ['PORT']}/openapi.json"
+          run_file = Path("backend/.venv/instagraph-run.json")
+          deadline = time.monotonic() + 60
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=2) as resp:
+                      title = json.load(resp)["info"]["title"]
+              except Exception:
+                  time.sleep(1)
+                  continue
+              if title != "Instagraph":
+                  sys.exit(f"{url} answered, but the title is {title!r}")
+              # install.py's running check (next step) relies on the run file.
+              while not run_file.exists() and time.monotonic() < deadline:
+                  time.sleep(0.5)
+              if not run_file.exists():
+                  sys.exit(f"The app answers, but run.py didn't write {run_file}")
+              print(f"Instagraph answers on {url}")
+              print(run_file.read_text())
+              sys.exit(0)
+          sys.exit(f"No answer from {url} within 60 s")
+          EOF
+
+      # Starting isn't enough: a real import catches problems that only show up on one OS
+      # (on Windows, imports failed without the tzdata package). Import a small sample
+      # dataset through the API and load the overview.
+      - name: Import sample data
+        run: |
+          python - <<'EOF'
+          import json, os, sys, time, urllib.request
+
+          base = f"http://127.0.0.1:{os.environ['PORT']}"
+
+
+          def call(method, path, body=None):
+              data = None if body is None else json.dumps(body).encode()
+              req = urllib.request.Request(
+                  base + path, data=data, method=method,
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.load(resp)
+
+
+          job = call("POST", "/api/import/sample", {"messages": 2000})["job_id"]
+          deadline = time.monotonic() + 300
+          while time.monotonic() < deadline:
+              state = call("GET", f"/api/import/jobs/{job}")
+              if state["status"] == "done":
+                  break
+              if state["status"] in ("error", "cancelled"):
+                  sys.exit(f"Sample import failed: {state.get('error')}")
+              time.sleep(1)
+          else:
+              sys.exit("Sample import didn't finish within 300 s")
+          call("GET", "/api/overview")
+          print("Sample import done, overview loads")
+          EOF
+
+      # Updating while the app runs must stop with a clear message (case A in the plan):
+      # on Windows, pip can't replace files the server has open. The run file holds port
+      # 8765, so install.py finds the server even though it isn't on the default port.
+      - name: Update while running (must refuse)
+        run: |
+          set +e
+          python install.py --yes --no-shortcut > update.log 2>&1
+          code=$?
+          set -e
+          cat update.log
+          if [ "$code" -eq 0 ]; then
+            echo "::error::install.py should exit non-zero while Instagraph is running"
+            exit 1
+          fi
+          if ! grep -qi "running" update.log; then
+            echo "::error::install.py's output doesn't say that Instagraph is running"
+            exit 1
+          fi
+
+      # Stop run.py and its uvicorn child, then wait until the port is free. On Windows,
+      # bash's kill doesn't reach the child process, so the whole tree is ended with
+      # taskkill, using the Windows PID of run.py and the uvicorn PID from the run file.
+      - name: Stop the app
+        if: ${{ !cancelled() && env.RUN_PID != '' }}
+        run: |
+          uvicorn_pid=$(python -c "import json; print(json.load(open('backend/.venv/instagraph-run.json'))['pid'])" 2>/dev/null || true)
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            [ -n "${RUN_WINPID:-}" ] && taskkill //PID "$RUN_WINPID" //T //F || true
+            [ -n "$uvicorn_pid" ] && taskkill //PID "$uvicorn_pid" //T //F || true
+          else
+            kill "$RUN_PID" 2>/dev/null || true
+            sleep 3
+            [ -n "$uvicorn_pid" ] && kill "$uvicorn_pid" 2>/dev/null || true
+          fi
+          python - <<'EOF'
+          import os, socket, sys, time
+
+          port = int(os.environ["PORT"])
+          deadline = time.monotonic() + 30
+          while time.monotonic() < deadline:
+              with socket.socket() as sock:
+                  sock.settimeout(1)
+                  if sock.connect_ex(("127.0.0.1", port)) != 0:
+                      print(f"Port {port} is free")
+                      sys.exit(0)
+              time.sleep(1)
+          sys.exit(f"Port {port} is still in use after 30 s")
+          EOF
+
+      # With the app stopped, running the installer again is a normal update and must
+      # succeed, reusing the private Node and the existing build.
+      - name: Update after stopping
+        run: python install.py --yes --no-shortcut
+
+      # pytest isn't part of the end-user install, so add it to the venv just for this.
+      - name: Installer unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          "$VENV_PY" -m pip install --quiet pytest
+          "$VENV_PY" -m pytest installer/tests -q
+
+      - name: Server log
+        if: ${{ always() }}
+        run: cat server.log 2>/dev/null || echo "(no server log)"

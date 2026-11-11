@@ -1,0 +1,13 @@
+# Lint settings for install.py, run.py and installer/ (the backend has its own in
+# backend/pyproject.toml, which this extends).
+extend = "backend/pyproject.toml"
+src = ["."]
+
+[lint.isort]
+known-first-party = ["installer"]
+
+[lint.per-file-ignores]
+# The entry scripts check the Python version with old-style code on purpose, so older
+# Pythons print a clear message instead of a syntax error.
+"install.py" = ["UP031", "UP036"]
+"run.py" = ["UP031", "UP036"]

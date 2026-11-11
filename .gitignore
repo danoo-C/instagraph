@@ -12,6 +12,9 @@ messages/inbox/
 
 # Python
 backend/.venv/
+backend/.venv-old-*/
+# install.py's record of what it created (desktop icons etc.)
+backend/.instagraph-install.json
 .venv/
 __pycache__/
 *.py[cod]

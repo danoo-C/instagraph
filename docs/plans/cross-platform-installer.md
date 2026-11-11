@@ -1,6 +1,8 @@
 # Plan: Cross-platform installer (`install.py`) and desktop icon
 
-**Status:** Planned. The icon (step 1) is done; steps 2–8 are not started.
+**Status:** Implemented on `feat/installer` (steps 1–8). Tested end to end on Linux/WSL; Windows and
+macOS are covered by unit tests, two code reviews and the CI workflow, but still need one manual run
+(see "Manual checks" at the end).
 **Date:** 2026-11-10
 **Scope:** New files `install.py`, `run.py`, `assets/icon.*`; README "Getting started"; a CI
 workflow. No changes to the backend or frontend code.
@@ -89,9 +91,10 @@ existing install.
    - Run `npm ci` and `npm run build` in `frontend/`. Put the chosen Node's folder first on
      `PATH` for these commands only, so npm's scripts run with the same Node.
    - Also don't skip the step if `node_modules` was installed on another OS (case B). The
-     build would fail with esbuild/rollup errors.
-   - Windows needs `npm.cmd`. With system Node, use `shutil.which("npm")`, which finds the
-     right name. With private Node, call `node/npm.cmd` (Windows) or `node/bin/npm` directly.
+     build would fail with rolldown/lightningcss errors.
+   - Windows needs `npm.cmd`. With system Node, use the `npm.cmd` next to `node.exe`, then
+     `shutil.which("npm.cmd")` (Python 3.12.0's `which("npm")` can return the extensionless
+     shell script). With private Node, call `node/npm.cmd` (Windows) or `node/bin/npm` directly.
 5. **Desktop icon:** ask "Create a desktop icon? [Y/n]" (`--shortcut` / `--no-shortcut`).
    See "Desktop icon on each OS". If a shortcut already exists, see case C.
 6. **Finish** by printing how to start it: the icon, or `python run.py`. If the user agrees
@@ -109,9 +112,10 @@ Used when no Node 20.19+ is found on `PATH`.
    just for Instagraph? It won't change anything else on your computer. [Y/n]". With `--yes`
    it downloads without asking. If the user says no, stop and print where to get Node
    (nodejs.org).
-2. **Pick the version:** a pinned major version in `install.py` (`NODE_MAJOR = 24`, the
+2. **Pick the version:** a pinned major version in `installer/node.py` (`NODE_MAJOR = 24`, the
    current LTS). Read `https://nodejs.org/dist/index.json` and take the newest release of that
-   major. Bump `NODE_MAJOR` when the frontend needs a newer Node.
+   major. Bump `NODE_MAJOR` when the frontend needs a newer Node. Node 24 needs macOS 13.5+,
+   so older macOS gets `NODE_MAJOR_OLD_MACOS = 22`.
 3. **Pick the archive** from `platform.system()` and `platform.machine()`:
 
    | OS | CPU | Archive |
@@ -182,7 +186,8 @@ with `--verbose`.
 
 All three use absolute paths to `<venv python>`, `run.py` and the icon, so they work no matter
 which folder they're started from. `--uninstall` removes exactly what was created. The paths
-are saved in `backend/.venv/instagraph-install.json`, so uninstall doesn't have to guess.
+are saved in `backend/.instagraph-install.json` (outside the venv, so it survives recreating the
+venv), so uninstall doesn't have to guess.
 If a shortcut with the same name already exists, case C decides whether it's updated,
 replaced or kept.
 
@@ -301,8 +306,8 @@ the same advice instead of the raw pip output.
 
 Example: the repo is on `/mnt/c/...`, and you run `install.py` from WSL and from Windows. A
 venv only works on the OS that made it: Windows uses `Scripts\python.exe` and Linux uses
-`bin/python`, and the compiled packages differ. `node_modules` also holds OS-specific esbuild
-and rollup binaries. The built `frontend/dist/` and `data/` work on both.
+`bin/python`, and the compiled packages differ. `node_modules` also holds OS-specific
+rolldown and lightningcss binaries. The built `frontend/dist/` and `data/` work on both.
 
 Venv check:
 
@@ -317,8 +322,10 @@ Venv check:
 
 `node_modules` check (step 4):
 
-- Vite pulls in OS-specific packages, so check that `node_modules/@esbuild/<os>-<cpu>`
-  exists for this OS (for example `@esbuild/win32-x64` or `@esbuild/linux-x64`). If it
+- Vite 8 pulls in OS-specific packages, so check that a `node_modules/@rolldown/binding-<os>-*`
+  folder exists for this OS (for example `binding-win32-x64-msvc` or `binding-linux-x64-gnu`).
+  Any CPU is accepted: npm installs bindings for the Node that is used, which can differ from
+  the real CPU (x64 Node under Rosetta or on Windows ARM). If it
   doesn't, run `npm ci`, which deletes `node_modules` and reinstalls it for this OS, and
   print why.
 - This also covers `node_modules` folders made by `make setup`, without a marker file.
@@ -355,7 +362,7 @@ backend change outside this plan.
 
 ## `--uninstall`
 
-Removes the shortcuts listed in `instagraph-install.json` and `backend/.venv`, including the
+Removes the shortcuts listed in `backend/.instagraph-install.json`, that file, and `backend/.venv`, including the
 private Node in it. Asks before
 deleting `frontend/dist` and `frontend/node_modules`. It **never deletes `data/`**: it prints
 where the data is and says to delete it with Settings → Clear all data, or by hand.
@@ -415,3 +422,19 @@ where the data is and says to delete it with Settings → Clear all data, or by 
 - **nodejs.org changes:** the download relies on `index.json`, `SHASUMS256.txt` and the archive
   names staying the same. They have been stable for years. If a download fails, the error
   message should still tell users they can install Node themselves.
+
+## Manual checks (not possible in CI)
+
+CI installs and starts the app on all three systems, but can't click icons. Once per system:
+
+1. **Windows:** `py install.py`, answer yes to the icon. Check that the desktop (also a
+   OneDrive desktop) and the Start menu show Instagraph with its icon, that double-clicking
+   opens a console and the browser, and that closing the console stops the app. Run the
+   installer again (expect "updated"), then `py install.py --uninstall`.
+2. **macOS:** `python3 install.py` with Python from python.org, without running "Install
+   Certificates.command" first (the Node download must still work if Node isn't installed).
+   `Instagraph.command` on the desktop should have the icon and open Terminal.
+3. **Linux desktop (GNOME/KDE):** the app menu entry appears; the desktop icon starts without
+   the "untrusted launcher" warning.
+4. **WSL:** answer yes to the Windows icon. The desktop and Start menu `.lnk` start Instagraph
+   in the right distro; `%LOCALAPPDATA%\Instagraph\icon-<hash>.ico` exists; uninstall removes them.
